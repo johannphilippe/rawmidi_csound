@@ -73,33 +73,6 @@ constexpr uint8_t unbitize7chksum(const uint8_t* in, size_t inlen, uint8_t* out)
     return chksum;
 }
 
-struct sysex_array : csnd::Plugin<1, 128>
-{
-  int init()
-  {
-      data.allocate(csound, in_count());
-      for(size_t i = 0; i < in_count(); ++i)
-      {
-          data[i] = inargs[i];
-          data[i] = data[i] & 0b01111111;
-
-      }
-      data[0] = 0xF0;
-      data[data.len() - 1] = 0xF7;
-
-      outargs.myfltvec_data(0).init(csound, in_count()+2);
-      for(size_t i = 1; i < in_count(); ++i)
-          outargs.myfltvec_data(0)[i] = data[i];
-      outargs.myfltvec_data(0)[0] = 0xF0;
-      outargs.myfltvec_data(0)[in_count()] = 0xF7;
-
-
-      return OK;
-  }
-
-  csnd::AuxMem<uint8_t> data;
-};
-
 
 struct sysex_print : csnd::InPlug<2>
 {
@@ -187,16 +160,11 @@ struct  rawmidi_list_devices : csnd::InPlug<1>
     }
 };
 
-struct rawmidi_in : csnd::Plugin<2, 2>
+struct rawmidi_in_open : csnd::Plugin<1, 2>
 {
     int init() {
-
-        std::cout << "in count " << in_count() << std::endl;
-
         if(in_count() > 1)
         {
-           std::cout << "inargs : " << *inargs.data(0) << " " << *inargs.data(1) << std::endl;
-           std::cout << "arg " << inargs[1] <<  " &  api number : " << get_api_from_index(inargs[1]) << std::endl;
            midiin = new RtMidiIn(get_api_from_index(inargs[1]));
            //midiin = new RtMidiIn(RtMidi::Api::LINUX_ALSA);
         }
@@ -219,8 +187,57 @@ struct rawmidi_in : csnd::Plugin<2, 2>
         }
 
         midiin->openPort(port_num);
-        midiin->ignoreTypes(false, false, false);
+        midiin->ignoreTypes(false, true, false);
         midiin->setBufferSize(4096, 4);
+        outargs[0] = reinterpret_cast<intptr_t>(midiin);
+        std::cout << "pointer casted : " << reinterpret_cast<intptr_t>(midiin) << std::endl;
+        std::cout << "pointer raw : " << midiin << std::endl;
+        return OK;
+    }
+    RtMidiIn *midiin = nullptr;
+};
+
+struct rawmidi_out_open : csnd::Plugin<1, 2>
+{
+    int init() {
+        if(in_count() > 1)
+            midiout = new RtMidiOut(get_api_from_index(static_cast<int>(inargs[1])));
+        else
+            midiout = new RtMidiOut();
+
+        unsigned int nports = midiout->getPortCount();
+        if(nports == 0) {
+           csound->init_error("No ports available");
+           return NOTOK;
+        }
+        size_t port_num = (int)inargs[0];
+        if(port_num >= nports) {
+            csound->init_error("Port not available" );
+            return NOTOK;
+        }
+
+        midiout->openPort(port_num);
+        outargs[0] = reinterpret_cast<intptr_t>(midiout);
+
+        return OK;
+    }
+
+    RtMidiOut *midiout = nullptr;
+};
+
+
+struct rawmidi_in : csnd::Plugin<2, 1>
+{
+    int init() {
+        intptr_t ptr = reinterpret_cast<intptr_t>((long)inargs[0]);
+        midiin = reinterpret_cast<RtMidiIn *>(ptr);
+        std::cout << "midi in pointer : " << ptr << "  casted to   "  << midiin << std::endl;
+        if(midiin == nullptr)
+        {
+            csound->init_error("Pointer to midi in is null");
+            return NOTOK;
+        }
+
         outargs.myfltvec_data(1).init(csound, 4096);
         vbuf.resize(4096);
         return kperf();
@@ -239,8 +256,6 @@ struct rawmidi_in : csnd::Plugin<2, 2>
         return OK;
     }
 
-
-
     RtMidiIn *midiin;
     std::vector<unsigned char> vbuf;
     double stamp;
@@ -254,27 +269,16 @@ inline void bit7(std::vector<unsigned char> &buf)
     }
 }
 
-struct rawmidi_out : csnd::InPlug<4>
+struct rawmidi_out : csnd::InPlug<3>
 {
     int init() {
-        if(in_count() > 3)
-            midiout = new RtMidiOut(get_api_from_index(static_cast<int>(args[3])));
-        else
-            midiout = new RtMidiOut();
-
-        unsigned int nports = midiout->getPortCount();
-        if(nports == 0) {
-           csound->init_error("No ports available");
-           return NOTOK;
-        }
-        size_t port_num = (int)args[0];
-        if(port_num >= nports) {
-            csound->init_error("Port not available" );
+        intptr_t ptr = reinterpret_cast<intptr_t>((long)args[0]);
+        midiout = reinterpret_cast<RtMidiOut *>(ptr);
+        if(midiout == nullptr)
+        {
+            csound->init_error("Pointer to midi in is null");
             return NOTOK;
         }
-
-        midiout->openPort(port_num);
-        //buf.resize(4096);
 
         return kperf();
     }
@@ -299,7 +303,7 @@ struct rawmidi_out : csnd::InPlug<4>
 };
 
 void csnd::on_load(Csound *csound) {
-    std::cout << "RtMidi RawMIDI for Csound " << std::endl;
+    std::cout << "RawMIDI : RtMidi for Csound " << std::endl;
     std::cout << "Supported API's are : \n"
             <<   "\t0=UNSPECIFIED, \n"
             <<   "\t1=MACOSX_CORE, \n"
@@ -314,15 +318,20 @@ void csnd::on_load(Csound *csound) {
 
     csnd::plugin<rawmidi_list_devices>(csound, "rawmidi_list_devices", "", "i", csnd::thread::ik);
 
-    // ksize, kdata[] rawmidi_in iport_num, [iApi_index]
-    csnd::plugin<rawmidi_in>(csound, "rawmidi_in", "kk[]", "im", csnd::thread::ik);
-    csnd::plugin<rawmidi_in>(csound, "rawmidi_in", "ii[]", "im", csnd::thread::i);
 
-    // rawmidi_out iport_num, ksize, kdata[], [iApi_index]
-    csnd::plugin<rawmidi_out>(csound, "rawmidi_out", "", "ikk[]m", csnd::thread::ik);
-    csnd::plugin<rawmidi_out>(csound, "rawmidi_out", "", "iii[]m", csnd::thread::i);
+    // ihandle rawmidi_in_open iport_num, [iapi_number]
+    csnd::plugin<rawmidi_in_open>(csound, "rawmidi_in_open", "i", "ii", csnd::thread::i);
+    // ihandle rawmidi_out_open iport_num, [iapi_number]
+    csnd::plugin<rawmidi_out_open>(csound, "rawmidi_out_open", "i", "ii", csnd::thread::i);
 
-    csnd::plugin<sysex_array>(csound, "sysex_arr", "i[]", "m", csnd::thread::i);
+    // ksize, kdata[] rawmidi_in iin_handle, [iApi_index]
+    csnd::plugin<rawmidi_in>(csound, "rawmidi_in", "kk[]", "i", csnd::thread::ik);
+    csnd::plugin<rawmidi_in>(csound, "rawmidi_in", "ii[]", "i", csnd::thread::i);
+
+    // rawmidi_out iout_handle, ksize, kdata[], [iApi_index]
+    csnd::plugin<rawmidi_out>(csound, "rawmidi_out", "", "ikk[]", csnd::thread::ik);
+    csnd::plugin<rawmidi_out>(csound, "rawmidi_out", "", "iii[]", csnd::thread::i);
+
 
     csnd::plugin<sysex_print>(csound, "sysex_print", "", "k[]k", csnd::thread::ik );
     csnd::plugin<sysex_print>(csound, "sysex_print", "", "i[]i", csnd::thread::i );

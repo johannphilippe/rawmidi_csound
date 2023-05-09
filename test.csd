@@ -8,81 +8,64 @@
 ; ==============================================
 <CsInstruments>
 
-// MIDI baud rate 31250
-
 sr	=	48000
 ksmps	=	64
 nchnls	=	2
 0dbfs	=	1
 
-
-instr 2
-	iZone = 0x00
-	iX = 0x72
-	iY = 0x30
-	iR = 0x74
-	iG = 0x74
-	iB = 0x74
-/*
-	iPix[] fillarray 0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x04, 0x21, iZone, iX, iY, iR, iG, iB, 0xF7
-	ilen = lenarray(iPix)
-	rawmidi_out(1, ilen, iPix, 2)
-*/
+gimidi_in = rawmidi_in_open(1, 2)
+gimidi_out = rawmidi_out_open(1, 2)
 
 
-	iW = 0x35
-	iH= 0x45
-	iRect[] sysex_arr  0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x04, 0x22, iZone, iX, iY, iW, iH, iR, iG, iB, 0xF7
-	ilen = lenarray(iRect)
-	rawmidi_out(1, ilen, iRect, 2)
-endin
+; Tests are performed on Embodme Erae Touch  sysex API
 
-instr 1	
-	rawmidi_list_devices 2
 
-	; first disable
-	iDis[] fillarray 0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x04, 0x02, 0xF7
-	ilen = lenarray(iDis)
-	rawmidi_out(1, ilen, iDis, 2)
-
-/*
-	; enable Sysex
+opcode erae_open_sysex, 0, i
+	ihandle xin
+	;		   F0    00    21    50    00    01    00    01    01    01    04    01 RECEIVER PREFIX BYTES F7
 	iArr[] fillarray 0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x04, 0x01, 0x00, 0x00, 0x01, 0xF7
 	ilen = lenarray(iArr)
-	rawmidi_out(1, ilen, iArr, 2)
-*/
+	rawmidi_out(ihandle, ilen, iArr)
+endop
 
-/*
+opcode erae_close_sysex, 0, i
+	ihandle xin
+	;		   F0    00    21    50    00    01    00    01    01    01    04    02    F7
+	iDis[] fillarray 0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x04, 0x02, 0xF7
+	ilen = lenarray(iDis)
+	rawmidi_out(ihandle, ilen, iDis)
+endop
 
-	iZone = 0x00
-	iX = 0x72
-	iY = 0x30
-	iR = 0x74
-	iG = 0x74
-	iB = 0x74
-	iPix[] fillarray 0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x04, 0x21, iZone, iX, iY, iR, iG, iB, 0xF7
-	ilen = lenarray(iPix)
-	rawmidi_out(1, ilen, iPix, 2)
+opcode erae_clear, 0, ii
+	ihandle, izone xin
+	; 	  	   F0    00    21    50    00    01    00    01    01    01    04  20   ZONE      F7
+	iArr[] fillarray 0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x04, 0x20, izone, 0xF7
+	ilen = lenarray(iArr)
+	rawmidi_out(ihandle, ilen, iArr)
+endop
 
-
-	iW = 0x35
-	iH= 0x45
-	iRect[] sysex_arr  0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x04, 0x22, iZone, iX, iY, iW, iH, iR, iG, iB
+opcode erae_draw_rectangle, 0, iiiiiiiii
+	ihandle, izone, ix, iy, iw, ih, ir, ig, ib xin
+	;  	      F0    00    21    50    00    01    00    01    01    01    04    22 ZONE XPOS YPOS WIDTH HEIGHT RED GREEN BLUE F7
+	iRect[] fillarray 0xF0,  0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x04, 0x22, izone, ix, iy, iw, ih, ir, ig, ib, 0xF7
 	ilen = lenarray(iRect)
-	rawmidi_out(1, ilen, iRect, 2)
+	sysex_print(iRect, ilen)
+	rawmidi_out(ihandle, ilen, iRect)
+endop
 
-*/
-
-	ksize, kArr[] rawmidi_in 1, 2
-	ktrig = (kArr[0] == 0xF0 && ksize > 0) ? 1 : 0
-	sysex_print(kArr, ktrig)
-
-	;print p3
-	;rawmidi_list_devices(2)
-	;ksize, kdata[] rawmidi_in 1, 2
-	;printk2 kdata[0]
-	
+instr 1 
+	rawmidi_list_devices(2)
+	erae_close_sysex(gimidi_out)
+	erae_open_sysex(gimidi_out)
+	erae_clear(gimidi_out, 0)
+	erae_draw_rectangle(gimidi_out, 0x00, 0x00, 0x00, 0x10, 0x10, 0x7F, 0x00, 0x7F)
+	ksize, kArr[] rawmidi_in gimidi_in
+	sysex_print kArr, ksize
+	;printk2 ksize
 endin
+
+
+
 
 
 
