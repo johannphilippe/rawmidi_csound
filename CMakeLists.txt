@@ -23,3 +23,5 @@ target_link_libraries(rawmidi_test PUBLIC rawmidi)
 target_link_libraries(rawmidi_test PUBLIC ${CSOUND_LIBRARY})
 
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/test.csd DESTINATION ${CMAKE_BINARY_DIR})
+
+enable_testing()
