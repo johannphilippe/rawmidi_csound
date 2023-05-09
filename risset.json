@@ -1,0 +1,56 @@
+{
+  "name": "rawmidi",
+  "version": "0.0.1",
+  "opcodes": [
+    "rawmidi_in_open",
+    "rawmidi_out_open",
+    "rawmidi_in",
+    "rawmidi_out",
+    "sysex_print"
+  ],
+  "libname": "librawmidi",
+  "short_description": "RtMidi support for raw MIDI in Csound",
+  "long_description": "A raw MIDI opcode for Csound allowing using MIDI without filters",
+  "author": "Johann Philippe",
+  "email": "johannphilippe@lilo.org",
+  "license": "LGPL",
+  "repository": "https://github.com/johannphilippe/rawmidi_csound",
+  "binaries": [
+    {
+      "platform": "linux",
+      "url": "https://github.com/csound-plugins/csound-plugins/releases/download/v${version}/csound-plugins--linux.zip",
+      "extractpath": "libjsfx.so",
+      "csound_version": ">=6.17<7.0"
+    },
+    {
+      "platform": "linux",
+      "url": "https://github.com/csound-plugins/csound-plugins/releases/download/v${version}/csound7-plugins--linux.zip",
+      "extractpath": "libjsfx.so",
+      "csound_version": ">=7.0"
+    },
+    {
+      "platform": "macos",
+      "url": "https://github.com/csound-plugins/csound-plugins/releases/download/v${version}/csound-plugins--macos.zip",
+      "extractpath": "libjsfx.dylib",
+      "csound_version": ">=6.17<7.0"
+    },
+    {
+      "platform": "macos",
+      "url": "https://github.com/csound-plugins/csound-plugins/releases/download/v${version}/csound7-plugins--macos.zip",
+      "extractpath": "libjsfx.dylib",
+      "csound_version": ">=7.0"
+    },
+    {
+      "platform": "windows",
+      "url": "https://github.com/csound-plugins/csound-plugins/releases/download/v${version}/csound-plugins--win64.zip",
+      "extractpath": "jsfx.dll",
+      "csound_version": ">=6.17<7.0"
+    },
+    {
+      "platform": "windows",
+      "url": "https://github.com/csound-plugins/csound-plugins/releases/download/v${version}/csound7-plugins--win64.zip",
+      "extractpath": "jsfx.dll",
+      "csound_version": ">=7.0"
+    }
+  ]
+}

@@ -5,11 +5,15 @@ It does not use Csound's internal MIDI implementation.
 
 # Use it 
 
-`ksize, kdata[] rawmidi_in iport_num, [iAPI_index]`
-`isize, idata[] rawmidi_in iport_num, [iAPI_index]`
 
-`rawmidi_out iport_num, ksize, kdata, [iAPI_index]`
-`rawmidi_out iport_num, isize, idata, [iAPI_index]`
+`ihandle rawmidi_in_open iport_num, [iAPI_index]`
+`ihandle rawmidi_out_open iport_num, [iAPI_index]`
+
+`ksize, kdata[] rawmidi_in ihandle`
+`isize, idata[] rawmidi_in ihdnale`
+
+`rawmidi_out ihandle_num, ksize, kdata`
+`rawmidi_out ihandle, isize, idata`
 
 	- ksize : size of data array
 	- kdata[] : 8 bit integer data array passed as Csound numbers (float). Only the integer part should be used. 
@@ -22,10 +26,10 @@ It does not use Csound's internal MIDI implementation.
 		* 4=WINDOWS_MM
 		* 5=RTMIDI_DUMMY
 		* 6=WEB_MIDI_API
+	- ihandle : pointer to the MIDI connection
 
 
-`iArr[] sysex_arr iarg1, arg2, arg3, [iarg4 ... iarg128]`
-`kArr[] sysex_arr iarg1, arg2, arg3, [iarg4 ... iarg128]`
-Generates a sysex array from a list of integer values between 0 and 127. The opcode will create the array adding the sysex header and footer, and making sure no value is above 127 in the list of arguments. 
+`sysex_print isize, iArr[]`
+`sysex_print ksize, kArr[]`
 
 
