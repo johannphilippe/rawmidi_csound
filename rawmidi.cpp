@@ -160,6 +160,37 @@ struct  rawmidi_list_devices : csnd::InPlug<1>
     }
 };
 
+struct rawmidi_virtual_in_open : csnd::Plugin<1, 2>
+{
+    int init() {
+        if(in_count() > 1)
+        {
+           midiin = new RtMidiIn(get_api_from_index(inargs[1]));
+           //midiin = new RtMidiIn(RtMidi::Api::LINUX_ALSA);
+        }
+        else
+        {
+           midiin = new RtMidiIn();
+        }
+
+        unsigned int nports = midiin->getPortCount();
+        if(nports == 0) {
+            csound->init_error("no ports available");
+            return NOTOK;
+        }
+
+
+        midiin->openVirtualPort(inargs.str_data(0).data);
+        midiin->ignoreTypes(false, true, false);
+        midiin->setBufferSize(4096, 4);
+        outargs[0] = reinterpret_cast<intptr_t>(midiin);
+        std::cout << "pointer casted : " << reinterpret_cast<intptr_t>(midiin) << std::endl;
+        std::cout << "pointer raw : " << midiin << std::endl;
+        return OK;
+    }
+    RtMidiIn *midiin = nullptr;
+};
+
 struct rawmidi_in_open : csnd::Plugin<1, 2>
 {
     int init() {
@@ -195,6 +226,28 @@ struct rawmidi_in_open : csnd::Plugin<1, 2>
         return OK;
     }
     RtMidiIn *midiin = nullptr;
+};
+
+struct rawmidi_virtual_out_open : csnd::Plugin<1, 2>
+{
+    int init() {
+        if(in_count() > 1)
+            midiout = new RtMidiOut(get_api_from_index(static_cast<int>(inargs[1])));
+        else
+            midiout = new RtMidiOut();
+
+        unsigned int nports = midiout->getPortCount();
+        if(nports == 0) {
+           csound->init_error("No ports available");
+           return NOTOK;
+        }
+        midiout->openVirtualPort(inargs.str_data(0).data);
+        outargs[0] = reinterpret_cast<intptr_t>(midiout);
+
+        return OK;
+    }
+
+    RtMidiOut *midiout = nullptr;
 };
 
 struct rawmidi_out_open : csnd::Plugin<1, 2>
@@ -323,6 +376,10 @@ void csnd::on_load(Csound *csound) {
     csnd::plugin<rawmidi_in_open>(csound, "rawmidi_in_open", "i", "ii", csnd::thread::i);
     // ihandle rawmidi_out_open iport_num, [iapi_number]
     csnd::plugin<rawmidi_out_open>(csound, "rawmidi_out_open", "i", "ii", csnd::thread::i);
+    // ihandle rawmidi_in_open Sport_name, [iapi_number]
+    csnd::plugin<rawmidi_virtual_in_open>(csound, "rawmidi_virtual_in_open", "i", "Si", csnd::thread::i);
+    // ihandle rawmidi_out_open Sport_name, [iapi_number]
+    csnd::plugin<rawmidi_virtual_out_open>(csound, "rawmidi_virtual_out_open", "i", "Si", csnd::thread::i);
 
     // ksize, kdata[] rawmidi_in iin_handle, [iApi_index]
     csnd::plugin<rawmidi_in>(csound, "rawmidi_in", "kk[]", "i", csnd::thread::ik);

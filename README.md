@@ -8,6 +8,8 @@ It does not use Csound's internal MIDI implementation.
 
 `ihandle rawmidi_in_open iport_num, [iAPI_index]`
 `ihandle rawmidi_out_open iport_num, [iAPI_index]`
+`ihandle rawmidi_virtual_in_open Sport_name, [iAPI_index]`
+`ihandle rawmidi_virtual_out_open Sport_name, [iAPI_index]`
 
 `ksize, kdata[] rawmidi_in ihandle`
 `isize, idata[] rawmidi_in ihdnale`
