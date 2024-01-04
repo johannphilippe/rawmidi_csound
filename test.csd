@@ -3,7 +3,7 @@
 -odac
 ;-+rtmidi=alsaseq
 ;-M hw:1,0
---opcode-lib="./librawmidi.so"
+;--opcode-lib="./librawmidi.so"
 </CsOptions>
 ; ==============================================
 <CsInstruments>
@@ -13,8 +13,8 @@ ksmps	=	64
 nchnls	=	2
 0dbfs	=	1
 
-gimidi_in = rawmidi_in_open(1, 2)
-gimidi_out = rawmidi_out_open(1, 2)
+gimidi_in = rawmidi_open_in(2, 2)
+gimidi_out = rawmidi_open_in(3, 2)
 
 
 ; Tests are performed on Embodme Erae Touch  sysex API
@@ -54,7 +54,9 @@ opcode erae_draw_rectangle, 0, iiiiiiiii
 endop
 
 instr 1 
-	rawmidi_list_devices(2)
+	print gimidi_in
+	print gimidi_out
+	Sins[], Souts[] rawmidi_list_devices 2
 	erae_close_sysex(gimidi_out)
 	erae_open_sysex(gimidi_out)
 	erae_clear(gimidi_out, 0)
