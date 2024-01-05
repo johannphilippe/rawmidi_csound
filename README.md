@@ -7,17 +7,11 @@
  * Not limited to MIDI channel messages (Sysex is on the table)
  * Raw access to MIDI streams
  * I and K rate for channel messages
- 
-Limitations 
-* You will need one device handle per input from this device (because each input eat the incoming stream) 
+
 For example : 
 ```
-ihandle = rawmidi_open_in(2, 2)
+ihandle = rawmidi_open_in(2, 2) ; Second device 2, with API 2 (Alsa Linux)
 kch, knote, kvel rawmidi_noteon_in ihandle
-// assume this line is in another instrument for example
-kch2, knote2, kvel2 rawmidi_noteon_in ihandle
-
-// The second one will not receive anything, since the first one already emptied the input buffer
 ```
 
 # Documentation
