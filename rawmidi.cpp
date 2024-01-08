@@ -783,6 +783,48 @@ struct rawmidi_pitchbend_in : rawmidi_3bytes_in<STATUS_PITCHBEND> {};
 struct rawmidi_programchange_in : rawmidi_2bytes_in<STATUS_PROGRAMCHANGE> {};
 struct rawmidi_aftertouch_in : rawmidi_2bytes_in<STATUS_AFTERTOUCH> {};
 
+
+struct decode_5bytes_float : csnd::Plugin<1, 3>
+{
+    int init() {
+        size_t iinsize = inargs[2];
+        static_assert (sizeof(float) == sizeof(uint32_t), "float is not 32 bits" );
+        size_t len8 = unbitized7size(iinsize);
+        std::cout << "unbitized size " << len8 << std::endl;
+        outbytes.allocate(csound, len8);
+        inbytes.allocate(csound, iinsize);
+        outargs.myfltvec_data(0).init(csound, 3);
+        return OK;
+    }
+
+    MYFLT convert(uint8_t v1, uint8_t v2, uint8_t v3, uint8_t v4) {
+        uint32_t temp = 0;
+        temp = ((v1 << 24) |
+                (v2 << 16) |
+                (v3 <<  8) |
+                 v4);
+        return *((float *) &temp);
+    }
+
+    int kperf() {
+        csnd::Vector<MYFLT> &in_bytes = inargs.vector_data<MYFLT>(0);
+        for(size_t i = 0; i < size_t(inargs[2]); ++i) {
+            inbytes[i] = static_cast<uint8_t>( static_cast<unsigned int>(in_bytes[i]));
+        }
+
+        uint8_t chksum = unbitize7chksum(inbytes.data(), size_t(inargs[2]), outbytes.data());
+        if(chksum != static_cast<uint8_t>(inargs[1])) {
+            csound->message("Checksum is different : " +  std::to_string(chksum) + " - " + std::to_string((uint8_t)inargs[1]));
+        }
+        float *xyz = (float *)outbytes.data();
+        outargs.myfltvec_data(0)[0] = xyz[0];
+        outargs.myfltvec_data(0)[1] = xyz[1];
+        outargs.myfltvec_data(0)[2] = xyz[2];
+        return OK;
+    }
+    csnd::AuxMem<uint8_t> inbytes, outbytes;
+};
+
 void csnd::on_load(Csound *csound) {
     std::cout << "RawMIDI : RtMidi for Csound " << std::endl;
     std::cout << "Supported API's are : \n"
@@ -795,6 +837,8 @@ void csnd::on_load(Csound *csound) {
             <<   "\t6=WEB_MIDI_API, \n"
             <<   "\t7=NUM_APIS"
               << std::endl;
+
+    csnd::plugin<decode_5bytes_float>(csound, "decode_floats", "k[]", "k[]ki", csnd::thread::ik);
 
     // Print and returns lists of input and output devices corresponding to the specified API
     csnd::plugin<rawmidi_list_devices>(csound, "rawmidi_list_devices", "S[]S[]", "i", csnd::thread::ik);
@@ -831,7 +875,7 @@ void csnd::on_load(Csound *csound) {
     csnd::plugin<rawmidi_noteoff_out>(csound, "rawmidi_noteoff_out.ii", "", "iiii", csnd::thread::i);
     csnd::plugin<rawmidi_cc_out>(csound, "rawmidi_cc_out.ii", "", "iiii", csnd::thread::i);
     csnd::plugin<rawmidi_pitchbend_out>(csound, "rawmidi_pitchbend_out.ii", "", "iiii", csnd::thread::i);
-    csnd::plugin<rawmidi_polyaftertouch_out>(csound, "rawmidi_noteoff_out.ii", "", "iiii", csnd::thread::i);
+    csnd::plugin<rawmidi_polyaftertouch_out>(csound, "rawmidi_polyaftertouch_out.ii", "", "iiii", csnd::thread::i);
     csnd::plugin<rawmidi_aftertouch_out>(csound, "rawmidi_aftertouch_out.ii", "", "iii", csnd::thread::i);
     csnd::plugin<rawmidi_programchange_out>(csound, "rawmidi_programchange_out.ii", "", "iii", csnd::thread::i);
 
@@ -840,7 +884,7 @@ void csnd::on_load(Csound *csound) {
     csnd::plugin<rawmidi_noteoff_out>(csound, "rawmidi_noteoff_out.ik", "", "ikkk", csnd::thread::ik);
     csnd::plugin<rawmidi_cc_out>(csound, "rawmidi_cc_out.ik", "", "ikkk", csnd::thread::ik);
     csnd::plugin<rawmidi_pitchbend_out>(csound, "rawmidi_pitchbend_out.ik", "", "ikkk", csnd::thread::ik);
-    csnd::plugin<rawmidi_polyaftertouch_out>(csound, "rawmidi_noteoff_out.ik", "", "ikkk", csnd::thread::ik);
+    csnd::plugin<rawmidi_polyaftertouch_out>(csound, "rawmidi_polyaftertouch_out.ik", "", "ikkk", csnd::thread::ik);
     csnd::plugin<rawmidi_aftertouch_out>(csound, "rawmidi_aftertouch_out.ik", "", "ikk", csnd::thread::ik);
     csnd::plugin<rawmidi_programchange_out>(csound, "rawmidi_programchange_out.ik", "", "ikk", csnd::thread::ik);
 
