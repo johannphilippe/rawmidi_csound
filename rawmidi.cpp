@@ -18,10 +18,6 @@ using namespace std;
  * 	* Not limited to MIDI channel messages (Sysex is on the table)
  *  * Raw access to MIDI streams
  *  * I and K rate for channel messages
- *
- *
- * 	* TODO
- * 	  * Filter for receiver : sysex only, note messages, cc's etc
 */
 
 
@@ -393,32 +389,6 @@ inline bool is_power_of_two(T n)
     return (i == 0) ? true : false;
 }
 
-struct rawmidi_in_set_buffersize : csnd::InPlug<2>
-{
-
-    int init() {
-        intptr_t ptr = reinterpret_cast<intptr_t>((long)args[0]);
-        midiin = reinterpret_cast<RtMidiIn *>(ptr);
-        if(midiin == nullptr)
-        {
-            csound->init_error("Pointer to midi device is null");
-            return NOTOK;
-        }
-
-        if(!is_power_of_two((int)args[1]))
-        {
-            csound->init_error("New buffer size needs to be power of 2");
-            return NOTOK;
-        }
-
-        midiin->setBufferSize(size_t(args[1]), size_t(args[2]));
-
-        return OK;
-    }
-    RtMidiIn *midiin;
-};
-
-
 struct rawmidi_in : csnd::Plugin<3, 1>
 {
     int init() {
@@ -472,39 +442,7 @@ struct rawmidi_in : csnd::Plugin<3, 1>
     unsigned int front;
 };
 
-/*
-struct rawmidi_in : csnd::Plugin<2, 1>
-{
-    int init() {
-        intptr_t ptr = reinterpret_cast<intptr_t>((long)inargs[0]);
-        midiin = reinterpret_cast<RtMidiIn *>(ptr);
-        if(midiin == nullptr)
-        {
-            csound->init_error("Pointer to midi device is null");
-            return NOTOK;
-        }
-
-        outargs.myfltvec_data(1).init(csound, DEFAULT_IN_BUFFER_SIZE * DEFAULT_IN_BUFFER_COUNT);
-        vbuf.resize(DEFAULT_IN_BUFFER_SIZE * DEFAULT_IN_BUFFER_COUNT);
-        return kperf();
-    }
-
-    int kperf() {
-        stamp = midiin->getMessage(&vbuf);
-        outargs[0] = vbuf.size();
-        for(size_t i = 0; i < vbuf.size(); ++i)
-        {
-            outargs.myfltvec_data(1).data_array()[i] = vbuf[i];
-        }
-        return OK;
-    }
-
-    RtMidiIn *midiin;
-    std::vector<unsigned char> vbuf;
-    double stamp;
-};
-*/
-
+// Get the last 7 bits of a byte in a buffer
 inline void bit7(std::vector<unsigned char> &buf)
 {
     for(size_t i = 1; i < buf.size() - 1; ++i)
@@ -536,6 +474,7 @@ struct rawmidi_out : csnd::InPlug<3>
                 buf[i] = buf[i] & 0b01111111;
         }
 
+        std::cout << "Midiout " << int(buf[11]) << " " << int(buf[12]) << std::endl;
         midiout->sendMessage(&buf);
         return OK;
     }
@@ -646,8 +585,8 @@ struct rawmidi_3bytes_in : csnd::Plugin<3,3>
         requested_channel = 255;
         requested_ident = 255;
 
-        buf.resize(1024);
-        tmp_buf.resize(1024);
+        buf.resize(128);
+        tmp_buf.resize(128);
         queue.ringSize = 100;
         queue.ring = new MidiInApi::MidiMessage[ queue.ringSize ];
 
@@ -721,8 +660,8 @@ struct rawmidi_2bytes_in : csnd::Plugin<2,2>
         requested_channel = 255;
         requested_ident = 255;
 
-        buf.resize(1024);
-        tmp_buf.resize(1024);
+        buf.resize(128);
+        tmp_buf.resize(128);
         queue.ringSize = 100;
         queue.ring = new MidiInApi::MidiMessage[ queue.ringSize ];
 
@@ -741,6 +680,7 @@ struct rawmidi_2bytes_in : csnd::Plugin<2,2>
     {
         MidiInApi::MidiQueue &receiver_queue = midiin->get_queue();
         MidiInApi::MidiQueue copy(receiver_queue);
+        midiin->use();
         copy.front = front;
         while(copy.pop(&tmp_buf, &stamp)) {
             MidiInApi::MidiMessage msg;
@@ -782,6 +722,344 @@ struct rawmidi_polyaftertouch_in : rawmidi_3bytes_in<STATUS_POLYAFTERTOUCH> {};
 struct rawmidi_pitchbend_in : rawmidi_3bytes_in<STATUS_PITCHBEND> {};
 struct rawmidi_programchange_in : rawmidi_2bytes_in<STATUS_PROGRAMCHANGE> {};
 struct rawmidi_aftertouch_in : rawmidi_2bytes_in<STATUS_AFTERTOUCH> {};
+
+
+/**
+ *
+ *  Embodme - ERAE Touch Functions
+ *
+ *	* Engine contains list of zone, and is the threaded process that gets transfer
+ *  * Zone is a representation of an API zone and its internal components
+ *
+ *
+ *  * Decision to make :
+ * 		- Use different zones for different widgets ?
+ * 		- Use one zone per view ?
+ * 		- 128 zones is enough... so a zone could only be one widget
+**/
+
+// For later, if implementing a "one zone UI api"
+struct erae_sysex_zone
+{
+
+};
+
+#include<thread>
+struct erae_sysex_engine
+{
+    erae_sysex_engine(RtMidiIn *in, RtMidiOut *out, size_t _fps)
+        : midiin(in)
+        , midiout(out)
+        , fps(_fps)
+        , sleep_time(1000 / fps)
+    {}
+
+    RtMidiIn *midiin;
+    RtMidiOut *midiout;
+    size_t fps;
+    size_t sleep_time; // ms
+    std::thread t;
+};
+
+struct color {
+    uint8_t r, g, b;
+    constexpr static const color white() {return {127, 127, 127};}
+    constexpr static const color black() {return {0, 0, 0};}
+    constexpr static const color red() {return {127, 0, 0};}
+    constexpr static const color green() {return {0, 127, 0};}
+    constexpr static const color blue() {return {0, 0, 127};}
+
+    void mult(float m) {
+        r = (uint8_t) float(r) * m;
+        g = (uint8_t) float(g) * m;
+        b = (uint8_t) float(b) * m;
+    }
+};
+
+struct fingerstream
+{
+    enum action_t {
+        click = 0,
+        slide = 1,
+        release = 2,
+        undefined = 3,
+    };
+
+    fingerstream()
+        :action(action_t::undefined)
+    {}
+
+    action_t action = action_t::undefined;
+    uint8_t finger;
+    size_t zone;
+    float x, y, z;
+    uint8_t chksum;
+};
+
+struct erae_messages {
+    static inline bool is_proper_boundary_reply(std::vector<uint8_t> &vec, uint8_t zone)
+    {
+        if(vec.size() != 10 || vec[4] != 0x7F) return false;
+        if(vec[6] != zone) return false;
+        return true;
+    }
+    static inline std::pair<uint8_t, uint8_t> get_boundaries(std::vector<uint8_t> &vec)
+    {
+        return {vec[7], vec[8]};
+    }
+
+    static inline bool is_proper_fingerstream(std::vector<uint8_t> &vec, uint8_t zone)
+    {
+        if(vec.size() != 22) return false;
+        if(vec[5] != zone) return false;
+        return true;
+    }
+
+    static inline void retrieve_action(uint8_t val, fingerstream &stream) {
+        uint8_t action = (val & 0b01110000) >> 4;
+        uint8_t finger = (val & 0b00001111);
+        if(action == 0b0000)
+            stream.action = fingerstream::action_t::click;
+        else if(action == 0b0001)
+            stream.action = fingerstream::action_t::slide;
+        else if(action == 0b0010)
+            stream.action = fingerstream::action_t::release;
+        else
+            stream.action = fingerstream::action_t::undefined;
+        stream.finger = finger;
+    }
+    static inline void get_fingerstream( std::vector<uint8_t> &vec, uint8_t width, uint8_t height, fingerstream &stream, csnd::AuxMem<uint8_t> &out_buf)
+    {
+        stream.chksum = vec[20];
+        retrieve_action(vec[4], stream);
+        stream.zone = vec[5];
+        uint8_t chksum = unbitize7chksum(vec.data() + 6, 14, out_buf.data());
+        if(chksum != stream.chksum)
+        {
+            // Error ? Or not ?
+        }
+
+        float * xyz = (float *)out_buf.data();
+        stream.x = xyz[0] / (float)width;
+        stream.y = xyz[1] / (float)height;
+        stream.z = xyz[2];
+    }
+
+    static inline std::vector<uint8_t> boundary_request(uint8_t zone)
+    {
+        //F0 00 21 50 00 01 00 01 01 01 04 10 ZONE F7
+        return std::vector<uint8_t>{0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x04, 0x10, zone, 0xF7};
+    }
+
+    static inline std::vector<uint8_t> draw_rectangle(uint8_t zone, uint8_t x, uint8_t y, uint8_t w, uint8_t h, color c)
+    {
+       //F0 00 21 50 00 01 00 01 01 01 04 22 ZONE XPOS YPOS WIDTH HEIGHT RED GREEN BLUE F7
+        return std::vector<uint8_t>{0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x04, 0x22, zone, x, y, w, h, c.r, c.g, c.b, 0xF7};
+    }
+
+    static inline std::vector<uint8_t> clear_zone(uint8_t zone)
+    {
+       //F0 00 21 50 00 01 00 01 01 01 04 20 ZONE F7
+        return std::vector<uint8_t>{0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0X01, 0x01, 0x01, 0x04, 0x20, zone, 0xF7};
+    }
+
+    static inline std::vector<uint8_t> draw_pixel(uint8_t zone, uint8_t x, uint8_t y, color c)
+    {
+        //F0 00 21 50 00 01 00 01 01 01 04 21 ZONE XPOS YPOS RED GREEN BLUE F7
+        //F0 00 21 50 00 01 00 01 01 01 04 21 ZONE XPOS YPOS RED GREEN BLUE F7
+        return std::vector<uint8_t>{0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x04, 0x21, zone, x, y, c.r, c.g, c.b, 0xF7};
+    }
+
+    static inline std::vector<uint8_t> draw_circle(uint8_t zone, uint8_t x, uint8_t y, uint8_t rad, color c)
+    {
+
+        std::vector<uint8_t> vec(1024);
+
+        size_t npoints = rad * 5;
+        size_t angle_increment = 360 / npoints;
+        for(size_t i = 0; i < npoints; ++i)
+        {
+            size_t angle = angle_increment * i;
+            uint8_t xp = x + rad * std::cos(angle);
+            uint8_t yp = y +rad * std::sin(angle);
+
+            std::vector<uint8_t> pix = draw_pixel(zone, xp, yp, c);
+            for(size_t j = 0; j < pix.size(); ++j)
+                vec.push_back(pix[j]);
+        }
+
+        return vec;
+    }
+
+
+};
+
+
+// WPZ = Widget per zone, as "one widget per zone", each zone contains max 1 widget that expands inside
+struct erae_wpz_base
+{
+    void prepare(csnd::Csound *cs, size_t insize)
+    {
+        queue.ringSize = 100;
+        queue.ring = new MidiInApi::MidiMessage[ queue.ringSize ];
+        buf.resize(1024);
+        tmp_buf.resize(1024);
+        size_t s = unbitized7size(insize);
+        out_buf.allocate(cs, s);
+        midiin->suscribe();
+
+        samples_to_refresh = cs->sr() / fps;
+    }
+
+
+    void get_data() {
+        MidiInApi::MidiQueue &receiver_queue = midiin->get_queue();
+        MidiInApi::MidiQueue copy(receiver_queue);
+        midiin->use();
+        copy.front = front;
+        while(copy.pop(&tmp_buf, &stamp)) {
+            MidiInApi::MidiMessage msg;
+            msg.bytes = tmp_buf;
+            msg.timeStamp = stamp;
+            queue.push(msg);
+        }
+        front = copy.front;
+    }
+
+    RtMidiInDispatcher *midiin;
+    RtMidiOut *midiout;
+    MidiInApi::MidiQueue queue;
+    uint8_t zone;
+
+    size_t front;
+    double stamp;
+    std::vector<unsigned char> buf, tmp_buf;
+    size_t width, height;
+    fingerstream stream_data;
+    csnd::AuxMem<uint8_t> out_buf;
+
+
+    uint8_t fps = 30;
+    size_t samples_to_refresh;
+    size_t increment = 0;
+};
+
+
+
+/**
+ * @brief The erae_wpz_xyz struct is a simple xyz pad
+ * @arg midiin
+ * @arg midiout
+ * @arg zone
+ * @arg optional color (rgb array)
+ *
+**/
+struct erae_wpz_xyz : csnd::Plugin<5, 4>, erae_wpz_base
+{
+    // Draw rectangle F0 00 21 50 00 01 00 01 01 01 04 22 ZONE XPOS YPOS WIDTH HEIGHT RED GREEN BLUE F7
+    // Request boundary in init
+    int init()
+    {
+        midiin = reinterpret_cast<RtMidiInDispatcher *>((intptr_t)inargs[0]);
+        midiout = reinterpret_cast<RtMidiOut *>((intptr_t)inargs[1]);
+        zone = inargs[2];
+        if(in_count() > 3) {
+            csnd::Vector<MYFLT> vec = inargs.vector_data<MYFLT>(3);
+            c = color{uint8_t(vec[0]), uint8_t(vec[1]), uint8_t(vec[2])};
+            c.mult(0.7);
+        }
+        inv_color = color{uint8_t(127-c.r), uint8_t(127-c.g), uint8_t(127-c.b) };
+
+        prepare(csound, 14);
+
+        // Request boundaries :
+        std::vector<uint8_t> msg = erae_messages::boundary_request(zone);
+        midiout->sendMessage(&msg);
+
+        screen.resize(1024);
+
+        for(size_t i = 0; i < 10; ++i)
+            fingerlist[i].action = fingerstream::action_t::undefined;
+
+        return OK;
+    }
+
+    void redraw() {
+        screen.clear();
+        std::vector<uint8_t> rect = erae_messages::draw_rectangle(zone, 0, 0, width, height, c);
+        for(size_t i = 0; i < rect.size(); ++i)
+            screen.push_back(rect[i]);
+        /*
+        for(size_t i = 0; i < 10; ++i) {
+            if(fingerlist[i].action == fingerstream::action_t::click || fingerlist[i].action == fingerstream::action_t::slide) {
+                color c = inv_color; //color::white();
+                c.mult(fingerlist[i].z);
+                rect = erae_messages::draw_rectangle(zone, uint8_t(fingerlist[i].x * width - 1), uint8_t(fingerlist[i].y * height - 1), 3, 3, c);
+                for(size_t i = 0; i < rect.size(); ++i)
+                    screen.push_back(rect[i]);
+            }
+        }
+        */
+
+        // Last touch cross
+            std::cout << "\n\nStart loop" << std::endl;
+        for(size_t i = 0; i < 10; ++i)
+        {
+
+            std::cout << i << " finger : " << (int)fingerlist[i].finger << " - action " << (int)fingerlist[i].action << std::endl;
+            if(fingerlist[i].action == fingerstream::action_t::click || fingerlist[i].action == fingerstream::action_t::slide) {
+                color cross_c = inv_color; //color::white();
+                cross_c.mult(stream_data.z);
+
+                rect = erae_messages::draw_rectangle(zone, fingerlist[i].x * width,  0, 1, height, cross_c);
+                for(size_t i = 0; i < rect.size(); ++i)
+                    screen.push_back(rect[i]);
+                rect = erae_messages::draw_rectangle(zone, 0,  fingerlist[i].y * height, width, 1, cross_c);
+                for(size_t i = 0; i < rect.size(); ++i)
+                    screen.push_back(rect[i]);
+            }
+        }
+        midiout->sendMessage(&screen);
+    }
+
+    int kperf()
+    {
+        get_data();
+        if(!queue.pop(&buf, &stamp)) {
+            return OK;
+        }
+        if(erae_messages::is_proper_boundary_reply(buf, zone)) {
+            std::pair<uint8_t, uint8_t> boundaries = erae_messages::get_boundaries(buf);
+            width = boundaries.first;
+            height = boundaries.second;
+            // Draw
+            std::vector<uint8_t> rect = erae_messages::draw_rectangle(zone, 0, 0, width, height, c);
+            midiout->sendMessage(&rect);
+        } else if(erae_messages::is_proper_fingerstream(buf, zone)) {
+            erae_messages::get_fingerstream( buf, width, height, stream_data, out_buf);
+            outargs[0] = stream_data.x;
+            outargs[1] = stream_data.y;
+            outargs[2] = stream_data.z;
+            outargs[3] = static_cast<int>(stream_data.action);
+            outargs[4] = static_cast<int>(stream_data.finger);
+
+            fingerstream &cur = fingerlist[stream_data.finger];
+            ::memcpy(&cur, &stream_data, sizeof(fingerstream));
+            if(increment > samples_to_refresh)
+            {
+                redraw();
+                increment = 0;
+             }
+            increment += csound->get_csound()->GetKsmps(csound->get_csound());
+        }
+        return OK;
+    }
+
+    color c = color::blue();
+    color inv_color;
+    fingerstream fingerlist[10];
+    std::vector<uint8_t> screen;
+};
 
 
 struct decode_5bytes_float : csnd::Plugin<1, 3>
@@ -839,6 +1117,7 @@ void csnd::on_load(Csound *csound) {
               << std::endl;
 
     csnd::plugin<decode_5bytes_float>(csound, "decode_floats", "k[]", "k[]ki", csnd::thread::ik);
+    csnd::plugin<erae_wpz_xyz>(csound, "erae_wpz_xyz", "kkkkk", "iiii[]", csnd::thread::ik);
 
     // Print and returns lists of input and output devices corresponding to the specified API
     csnd::plugin<rawmidi_list_devices>(csound, "rawmidi_list_devices", "S[]S[]", "i", csnd::thread::ik);

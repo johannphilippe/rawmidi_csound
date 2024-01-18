@@ -97,9 +97,28 @@ cd rawmidi_csound
 mkdir build && cd build
 cmake ..
 make
-## replace ".so" with your OS extension
 sudo cp librawmidi.so /your/path/to/csound/plugins
-`̀ `
+```
 
 
+# Erae sysex engine 
 
+For Embodme Erae touch sysex API.
+Two engines : one widget per zone (wpz), and the other will have an actual refresh rate
+Now only the widget per zone is implemented with one widget.
+
+## WPZ - Widget per zone (one per zone)
+
+* Try games
+	- Pong 
+	- Cellular automata
+	- A ball we can launch agains walls (bouncing game) 
+		- Bouncing ball with gravity (one wall must be gravity)
+		- A 4 wall structure with energy decrease (trajectory system)
+
+
+# Todo 
+
+* Unsuscribe methods (destructors, unload) for inputs 
+* Interpolate axis in wpz (z particularly) for better graphical representation
+* framerate engine for games and so.

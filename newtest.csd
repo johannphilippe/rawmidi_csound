@@ -7,10 +7,11 @@
 <CsInstruments>
 
 sr	=	48000
-ksmps	=	128
+ksmps	=	1
 nchnls	=	2
 0dbfs	=	1
 
+/*
 instr 1	
 
 Sins[], Souts[] rawmidi_list_devices 2
@@ -47,14 +48,12 @@ rawmidi_noteon_out(ihandle, 1, 1, 4)
 rawmidi_noteon_out(ihandle, 1, 1, 5)
 rawmidi_noteon_out(ihandle, 1, 1, 6)
 
-/*
 rawmidi_noteoff_out(ihandle, 2, 1, 1)
 rawmidi_noteoff_out(ihandle, 2, 1, 2)
 rawmidi_noteoff_out(ihandle, 2 , 1, 3)
 rawmidi_noteoff_out(ihandle, 2, 1, 4)
 rawmidi_noteoff_out(ihandle, 2, 1, 5)
 rawmidi_noteoff_out(ihandle, 2, 1, 6)
-*/
 endin
 
 instr 2 ; inputs
@@ -129,19 +128,30 @@ instr 7 ; Test to see if several inputs of same handle are "stealing" or not >> 
 	printk2 knote2, 86
 	printk2 kvel2, 90
 endin
+
+*/
+gihandle = rawmidi_open_in(2, 2)
+instr 8	
+	kch, knote, kvel rawmidi_noteon_in gihandle
+	printk2 kch
+	printk2 knote, 10
+	printk2 kvel, 20
+
+	kch2, knote2, kvel2 rawmidi_noteon_in gihandle
+	printk2 kch2, 40
+	printk2 knote2, 50
+	printk2 kvel2, 60
+endin
+
+
+
 </CsInstruments>
 ; ==============================================
 <CsScore>
 
 f 0 z
 ;i 1 0 1
-i 6 0 -1
-i 6.1 0 -1
-i 6.2 0 -1
-i 6.3 0 -1
-i 6.4 0 -1
-i 6.5 0 -1
-i 6.6 0 -1
+i 8 0 -1
 
 </CsScore>
 </CsoundSynthesizer>
