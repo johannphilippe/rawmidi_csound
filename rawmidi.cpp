@@ -845,6 +845,16 @@ struct erae_messages {
         stream.z = xyz[2];
     }
 
+    static inline std::vector<uint8_t> open_sysex(uint8_t receiver, uint8_t prefix, uint8_t bytes)
+    {
+        return std::vector<uint8_t>{0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x04, 0x01, receiver, prefix, bytes, 0xF7};
+    }
+
+    static inline const std::vector<uint8_t> close_sysex()
+    {
+        return std::vector<uint8_t>{0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x04, 0x02, 0xF7};
+    }
+
     static inline std::vector<uint8_t> boundary_request(uint8_t zone)
     {
         //F0 00 21 50 00 01 00 01 01 01 04 10 ZONE F7
@@ -989,17 +999,6 @@ struct erae_wpz_xyz : csnd::Plugin<5, 4>, erae_wpz_base
         std::vector<uint8_t> rect = erae_messages::draw_rectangle(zone, 0, 0, width, height, c);
         for(size_t i = 0; i < rect.size(); ++i)
             screen.push_back(rect[i]);
-        /*
-        for(size_t i = 0; i < 10; ++i) {
-            if(fingerlist[i].action == fingerstream::action_t::click || fingerlist[i].action == fingerstream::action_t::slide) {
-                color c = inv_color; //color::white();
-                c.mult(fingerlist[i].z);
-                rect = erae_messages::draw_rectangle(zone, uint8_t(fingerlist[i].x * width - 1), uint8_t(fingerlist[i].y * height - 1), 3, 3, c);
-                for(size_t i = 0; i < rect.size(); ++i)
-                    screen.push_back(rect[i]);
-            }
-        }
-        */
 
         // Last touch cross
             std::cout << "\n\nStart loop" << std::endl;
@@ -1061,6 +1060,67 @@ struct erae_wpz_xyz : csnd::Plugin<5, 4>, erae_wpz_base
     std::vector<uint8_t> screen;
 };
 
+struct erae_sysex_open : csnd::InPlug<4>
+{
+    int init()
+    {
+        RtMidiOut *midiout = reinterpret_cast<RtMidiOut *>(intptr_t(args[0]));
+        if(midiout == nullptr)
+        {
+            csound->init_error("Midi Out is null");
+            return NOTOK;
+        }
+
+        uint8_t receiver, prefix, bytes;
+        receiver = static_cast<uint8_t>(args[1]);
+        prefix = static_cast<uint8_t>(args[2]);
+        bytes = static_cast<uint8_t>(args[3]);
+
+        std::vector<uint8_t> v = erae_messages::open_sysex(receiver, prefix, bytes);
+        midiout->sendMessage(&v);
+
+        return OK;
+    }
+
+};
+
+struct erae_sysex_close : csnd::InPlug<1>
+{
+    int init()
+    {
+        RtMidiOut *midiout = reinterpret_cast<RtMidiOut *>(intptr_t(args[0]));
+        if(midiout == nullptr)
+        {
+            csound->init_error("Midi Out is null");
+            return NOTOK;
+        }
+
+        std::vector<uint8_t> v = erae_messages::close_sysex();
+        midiout->sendMessage(&v);
+
+        return OK;
+    }
+};
+
+struct erae_sysex_clear_zone : csnd::InPlug<2>
+{
+
+    int init()
+    {
+        RtMidiOut *midiout = reinterpret_cast<RtMidiOut *>(intptr_t(args[0]));
+        if(midiout == nullptr)
+        {
+            csound->init_error("Midi Out is null");
+            return NOTOK;
+        }
+        uint8_t zone = static_cast<uint8_t>(args[1]);
+
+        std::vector<uint8_t> v = erae_messages::clear_zone(zone);
+        midiout->sendMessage(&v);
+
+        return OK;
+    }
+};
 
 struct decode_5bytes_float : csnd::Plugin<1, 3>
 {
@@ -1116,7 +1176,15 @@ void csnd::on_load(Csound *csound) {
             <<   "\t7=NUM_APIS"
               << std::endl;
 
+    // Basinc ERAE Touch sysex API functions
+    csnd::plugin<erae_sysex_open>(csound, "erae_sysex_open", "", "iiii", csnd::thread::i);
+    csnd::plugin<erae_sysex_close>(csound, "erae_sysex_close", "", "i", csnd::thread::i);
+    csnd::plugin<erae_sysex_clear_zone>(csound, "erae_sysex_clear_zone", "", "ii", csnd::thread::i);
+
+    // Floats decoder for 7bitized float stream
     csnd::plugin<decode_5bytes_float>(csound, "decode_floats", "k[]", "k[]ki", csnd::thread::ik);
+
+    // WPZ is widget per zone, a set of widgets using one full API zone
     csnd::plugin<erae_wpz_xyz>(csound, "erae_wpz_xyz", "kkkkk", "iiii[]", csnd::thread::ik);
 
     // Print and returns lists of input and output devices corresponding to the specified API

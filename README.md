@@ -122,3 +122,4 @@ Now only the widget per zone is implemented with one widget.
 * Unsuscribe methods (destructors, unload) for inputs 
 * Interpolate axis in wpz (z particularly) for better graphical representation
 * framerate engine for games and so.
+* Missing erae api functions (draw pixel, rectangle, boundaries, fingerstream etc)
