@@ -762,6 +762,8 @@ struct erae_sysex_engine
 };
 
 struct color {
+
+
     uint8_t r, g, b;
     constexpr static const color white() {return {127, 127, 127};}
     constexpr static const color black() {return {0, 0, 0};}
@@ -773,6 +775,12 @@ struct color {
         r = (uint8_t) float(r) * m;
         g = (uint8_t) float(g) * m;
         b = (uint8_t) float(b) * m;
+    }
+
+    void inv() {
+        r = 127 - r;
+        g = 127 - g;
+        b = 127 - b;
     }
 };
 
@@ -842,6 +850,23 @@ struct erae_messages {
         float * xyz = (float *)out_buf.data();
         stream.x = xyz[0] / (float)width;
         stream.y = xyz[1] / (float)height;
+        stream.z = xyz[2];
+    }
+
+    static inline void get_fingerstream_not_normalized( std::vector<uint8_t> &vec, uint8_t width, uint8_t height, fingerstream &stream, csnd::AuxMem<uint8_t> &out_buf)
+    {
+        stream.chksum = vec[20];
+        retrieve_action(vec[4], stream);
+        stream.zone = vec[5];
+        uint8_t chksum = unbitize7chksum(vec.data() + 6, 14, out_buf.data());
+        if(chksum != stream.chksum)
+        {
+            // Error ? Or not ?
+        }
+
+        float * xyz = (float *)out_buf.data();
+        stream.x = xyz[0];
+        stream.y = xyz[1];
         stream.z = xyz[2];
     }
 
@@ -921,6 +946,11 @@ struct erae_wpz_base
         samples_to_refresh = cs->sr() / fps;
     }
 
+    void set_fps(csnd::Csound *cs, uint8_t _fps)
+    {
+        fps = _fps;
+        samples_to_refresh = cs->sr() / fps;
+    }
 
     void get_data() {
         MidiInApi::MidiQueue &receiver_queue = midiin->get_queue();
@@ -962,6 +992,12 @@ struct erae_wpz_base
  * @arg midiout
  * @arg zone
  * @arg optional color (rgb array)
+ *
+ * @return x
+ * @return y
+ * @return z
+ * @return action
+ * @return finger
  *
 **/
 struct erae_wpz_xyz : csnd::Plugin<5, 4>, erae_wpz_base
@@ -1058,6 +1094,356 @@ struct erae_wpz_xyz : csnd::Plugin<5, 4>, erae_wpz_base
     color inv_color;
     fingerstream fingerlist[10];
     std::vector<uint8_t> screen;
+};
+
+/**
+ * @brief The erae_wpz_matrix struct is a matrix for Erae touch
+ * @arg midiin
+ * @arg midiout
+ * @arg zone
+ * @arg nrows
+ * @arg ncols
+ *
+ * @return Matrix as array of arrays
+ * @return changed : 1 or 0
+ * @return row
+ * @return col
+**/
+// Configurable matrix
+struct erae_wpz_matrix : csnd::Plugin<5, 8>, erae_wpz_base
+{
+
+    struct cell_state {
+        bool activated;
+        float value;
+        double time;
+        bool is_double;
+    };
+
+    int init()
+    {
+        midiin = reinterpret_cast<RtMidiInDispatcher *>((intptr_t)inargs[0]);
+        midiout = reinterpret_cast<RtMidiOut *>((intptr_t)inargs[1]);
+        zone = inargs[2];
+        nrows = static_cast<uint8_t>(inargs[3]);
+        ncols = static_cast<uint8_t>(inargs[4]);
+
+        csnd::Vector<MYFLT> &outs = outargs.vector_data<MYFLT>(0);
+        outs.init(csound, nrows * ncols);
+
+        rectsize = static_cast<uint8_t>(inargs[7]);
+
+        csnd::Vector<MYFLT> basecol_vec = inargs.vector_data<MYFLT>(5);
+        csnd::Vector<MYFLT> selcol_vec = inargs.vector_data<MYFLT>(6);
+        basecolor = color{uint8_t(basecol_vec[0]), uint8_t(basecol_vec[1]), uint8_t(basecol_vec[2])};
+        selcolor = color{uint8_t(selcol_vec[0]), uint8_t(selcol_vec[1]), uint8_t(selcol_vec[2])};
+
+        prepare(csound, 14);
+
+        // Request boundaries :
+        std::vector<uint8_t> msg = erae_messages::boundary_request(zone);
+        midiout->sendMessage(&msg);
+
+        screen.resize(1024);
+        selection_list.allocate(csound, nrows * ncols);
+
+        return kperf();
+    }
+
+    void redraw()
+    {
+        screen.clear();
+        color c = basecolor;
+        uint8_t posx = 0, posy = 0;
+        for(size_t row = 0; row < nrows; ++row) {
+            posy = row * 2;
+            for(size_t col = 0; col < ncols; ++col) {
+                c = basecolor;
+                if((col+row)%2 != 0)
+                    c.mult(0.2);
+
+                size_t index = (ncols * row) + col;
+                if(selection_list[index].activated) {
+                    c = selcolor;
+                    c.mult(selection_list[index].value);
+                }
+
+                posx = col * 2;
+                std::vector<uint8_t> rect = erae_messages::draw_rectangle(zone, posx, posy, rectsize, rectsize, c);
+                for(size_t i = 0; i < rect.size(); ++i)
+                    screen.push_back(rect[i]);
+            }
+        }
+        midiout->sendMessage(&screen);
+    }
+
+    inline bool is_short_click(double t1, double t2)
+    {
+        constexpr static const double short_click_time = 200.0;
+        return (t2 - t1) * 1000 < short_click_time;
+    }
+
+    int kperf()
+    {
+        get_data();
+        if(!queue.pop(&buf, &stamp)) {
+            outargs[1] = 0;
+            return OK;
+        }
+        if(erae_messages::is_proper_boundary_reply(buf, zone)) {
+            std::pair<uint8_t, uint8_t> boundaries = erae_messages::get_boundaries(buf);
+            width = boundaries.first;
+            height = boundaries.second;
+            // Draw
+            redraw();
+        } else if(erae_messages::is_proper_fingerstream(buf, zone)) {
+            // Find which square is picked
+
+            erae_messages::get_fingerstream_not_normalized( buf, width, height, stream_data, out_buf);
+
+            size_t col = std::floor(stream_data.x / rectsize);
+            size_t row = std::floor(stream_data.y / rectsize);
+            if(col >= ncols || row >= nrows)
+                return OK;
+            size_t index = (ncols * row) + col;
+
+            switch (stream_data.action) {
+            case fingerstream::action_t::click:
+            {
+                // if not short click : activate
+                // If double click : set value to 1
+                selection_list[index].activated = true;
+                selection_list[index].value = stream_data.z;
+                selection_list[index].time = csound->current_time_seconds();
+                break;
+            }
+            case fingerstream::action_t::slide:
+            {
+                selection_list[index].value = stream_data.z;
+                break;
+            }
+            case fingerstream::action_t::release:
+            {
+                if(is_short_click(selection_list[index].time, csound->current_time_seconds()))
+                    selection_list[index].activated = false;
+                break;
+            }
+            case fingerstream::action_t::undefined:
+            {break;}
+            }
+
+            if(!selection_list[index].activated)
+                selection_list[index].value = 0;
+
+            csnd::Vector<MYFLT> &outs = outargs.vector_data<MYFLT>(0);
+            outs[index] = selection_list[index].value;
+            outargs[1] = 1;
+            outargs[2] = row;
+            outargs[3] = col;
+            outargs[4] = index;
+
+            if(increment > samples_to_refresh)
+            {
+                redraw();
+                increment = 0;
+             }
+            increment += csound->get_csound()->GetKsmps(csound->get_csound());
+        } else {
+            outargs[1] = 0;
+        }
+        return OK;
+    }
+
+    uint8_t nrows, ncols;
+    color basecolor, selcolor;
+    uint8_t rectsize;
+    std::vector<uint8_t> screen;
+    csnd::AuxMem<cell_state> selection_list;
+};
+
+
+struct erae_wpz_matrix_dyn : csnd::Plugin<5, 9>, erae_wpz_base
+{
+
+    struct cell_state {
+        bool activated;
+        float value;
+        double time;
+        bool is_double;
+    };
+
+    int init()
+    {
+        midiin = reinterpret_cast<RtMidiInDispatcher *>((intptr_t)inargs[0]);
+        midiout = reinterpret_cast<RtMidiOut *>((intptr_t)inargs[1]);
+        zone = inargs[2];
+        nrows = static_cast<uint8_t>(inargs[3]);
+        ncols = static_cast<uint8_t>(inargs[4]);
+
+        csnd::Vector<MYFLT> &outs = outargs.vector_data<MYFLT>(0);
+        outs.init(csound, nrows * ncols);
+
+        rectsize = static_cast<uint8_t>(inargs[7]);
+
+        csnd::Vector<MYFLT> basecol_vec = inargs.vector_data<MYFLT>(5);
+        csnd::Vector<MYFLT> selcol_vec = inargs.vector_data<MYFLT>(6);
+        basecolor = color{uint8_t(basecol_vec[0]), uint8_t(basecol_vec[1]), uint8_t(basecol_vec[2])};
+        selcolor = color{uint8_t(selcol_vec[0]), uint8_t(selcol_vec[1]), uint8_t(selcol_vec[2])};
+
+        prepare(csound, 14);
+
+        // Request boundaries :
+        std::vector<uint8_t> msg = erae_messages::boundary_request(zone);
+        midiout->sendMessage(&msg);
+
+        screen.resize(1024);
+        selection_list.allocate(csound, nrows * ncols);
+
+        set_fps(csound, 50);
+
+        return kperf();
+    }
+
+    void redraw()
+    {
+        csnd::Vector<MYFLT> &ctrls = inargs.vector_data<MYFLT>(8);
+        screen.clear();
+        color c = basecolor;
+        uint8_t posx = 0, posy = 0;
+        for(size_t row = 0; row < nrows; ++row) {
+            double ctrl_val = std::abs(ctrls[row]);
+            ctrl_val = (ctrl_val > 1) ? 1 : (ctrl_val < 0) ? 0 : ctrl_val;
+            ctrl_val *= 0.9;
+            ctrl_val += 0.1;
+
+            posy = row * 2;
+            for(size_t col = 0; col < ncols; ++col) {
+                c = basecolor;
+                if((col+row)%2 != 0)
+                    c.mult(0.2);
+
+
+                size_t index = (ncols * row) + col;
+                if(selection_list[index].activated) {
+                    c = selcolor;
+                    c.mult(selection_list[index].value);
+                }
+                c.mult(ctrl_val);
+
+                posx = col * 2;
+                std::vector<uint8_t> rect = erae_messages::draw_rectangle(zone, posx, posy, rectsize, rectsize, c);
+                for(size_t i = 0; i < rect.size(); ++i)
+                    screen.push_back(rect[i]);
+            }
+        }
+        midiout->sendMessage(&screen);
+    }
+
+    inline bool is_short_click(double t1, double t2)
+    {
+        constexpr static const double short_click_time = 200.0;
+        return (t2 - t1) * 1000 < short_click_time;
+    }
+
+    int kperf()
+    {
+        bool newmessage = true;
+        get_data();
+        if(!queue.pop(&buf, &stamp)) {
+            outargs[1] = 0;
+            newmessage = false;
+        }
+        if(newmessage && erae_messages::is_proper_boundary_reply(buf, zone)) {
+            std::pair<uint8_t, uint8_t> boundaries = erae_messages::get_boundaries(buf);
+            width = boundaries.first;
+            height = boundaries.second;
+            // Draw
+            redraw();
+        } else if(newmessage && erae_messages::is_proper_fingerstream(buf, zone)) {
+            // Find which square is picked
+
+            erae_messages::get_fingerstream_not_normalized( buf, width, height, stream_data, out_buf);
+
+            size_t col = std::floor(stream_data.x / rectsize);
+            size_t row = std::floor(stream_data.y / rectsize);
+            if(col >= ncols || row >= nrows)
+                return OK;
+            size_t index = (ncols * row) + col;
+
+            switch (stream_data.action) {
+            case fingerstream::action_t::click:
+            {
+                // if not short click : activate
+                // If double click : set value to 1
+                selection_list[index].activated = true;
+                selection_list[index].value = stream_data.z;
+                selection_list[index].time = csound->current_time_seconds();
+                break;
+            }
+            case fingerstream::action_t::slide:
+            {
+                selection_list[index].value = stream_data.z;
+                break;
+            }
+            case fingerstream::action_t::release:
+            {
+                if(is_short_click(selection_list[index].time, csound->current_time_seconds()))
+                    selection_list[index].activated = false;
+                break;
+            }
+            case fingerstream::action_t::undefined:
+            {break;}
+            }
+
+            if(!selection_list[index].activated)
+                selection_list[index].value = 0;
+
+            csnd::Vector<MYFLT> &outs = outargs.vector_data<MYFLT>(0);
+            outs[index] = selection_list[index].value;
+            outargs[1] = 1;
+            outargs[2] = row;
+            outargs[3] = col;
+            outargs[4] = index;
+
+        } else {
+            outargs[1] = 0;
+        }
+        if(increment > samples_to_refresh)
+        {
+            redraw();
+            increment = 0;
+         }
+        increment += csound->get_csound()->GetKsmps(csound->get_csound());
+        return OK;
+    }
+
+    uint8_t nrows, ncols;
+    color basecolor, selcolor;
+    uint8_t rectsize;
+    std::vector<uint8_t> screen;
+    csnd::AuxMem<cell_state> selection_list;
+};
+/**
+ * @brief Retrieve from matrix array
+ *
+ * @arg array
+ * @arg ncols
+ * @arg row
+ * @arg col
+ *
+ * @return value
+**/
+struct erae_wpz_matrix_getvalue : csnd::Plugin<1, 4>
+{
+    int init() {return OK;}
+
+    int kperf()
+    {
+        size_t index = (inargs[1] * inargs[2]) + inargs[3];
+        csnd::Vector<MYFLT> v = inargs.vector_data<MYFLT>(0);
+        outargs[0] = v[index];
+        return OK;
+    }
 };
 
 struct erae_sysex_open : csnd::InPlug<4>
@@ -1186,6 +1572,9 @@ void csnd::on_load(Csound *csound) {
 
     // WPZ is widget per zone, a set of widgets using one full API zone
     csnd::plugin<erae_wpz_xyz>(csound, "erae_wpz_xyz", "kkkkk", "iiii[]", csnd::thread::ik);
+    csnd::plugin<erae_wpz_matrix>(csound, "erae_wpz_matrix", "k[]kkkk", "iiiiii[]i[]i", csnd::thread::ik);
+    csnd::plugin<erae_wpz_matrix_getvalue>(csound, "erae_wpz_matrix_getvalue", "k", "k[]kkk", csnd::thread::ik);
+    csnd::plugin<erae_wpz_matrix_dyn>(csound, "erae_wpz_matrix_dyn", "k[]kkkk", "iiiiii[]i[]ik[]", csnd::thread::ik);
 
     // Print and returns lists of input and output devices corresponding to the specified API
     csnd::plugin<rawmidi_list_devices>(csound, "rawmidi_list_devices", "S[]S[]", "i", csnd::thread::ik);

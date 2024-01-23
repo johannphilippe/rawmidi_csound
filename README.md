@@ -115,7 +115,8 @@ Now only the widget per zone is implemented with one widget.
 	- A ball we can launch agains walls (bouncing game) 
 		- Bouncing ball with gravity (one wall must be gravity)
 		- A 4 wall structure with energy decrease (trajectory system)
-
+	- A water game (object in water that can be manually moved and respond to water inertia)
+	- A matrix based effect with modulation : (each modulation is a combination of the matrix inputs) and feedbacks 
 
 # Todo 
 
@@ -123,3 +124,4 @@ Now only the widget per zone is implemented with one widget.
 * Interpolate axis in wpz (z particularly) for better graphical representation
 * framerate engine for games and so.
 * Missing erae api functions (draw pixel, rectangle, boundaries, fingerstream etc)
+* Detect : short clic, double clic
