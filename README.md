@@ -73,13 +73,13 @@ Facilities for channel messages outputs :
 Facilities for channel messages inputs : 
 These opcodes return k-rate only, for design reasons.
 
-`kchan, kkey, kvel rawmidi_noteon_in ihandle`
-`kchan, kkey, kvel rawmidi_noteoff_in ihandle`
-`kchan, kctl, kval rawmidi_cc_in ihandle`
-`kchan, kval1, kval2 rawmidi_pitchbend_in ihandle`
-`kchan, kval rawmidi_aftertouch_in ihandle`
-`kchan, kkey, kval rawmidi_polyaftertouch_in ihandle`
-`kchan, kval  rawmidi_programchange_in ihandle`
+`kchanged, kchan, kkey, kvel rawmidi_noteon_in ihandle`
+`kchanged, kchan, kkey, kvel rawmidi_noteoff_in ihandle`
+`kchanged, kchan, kctl, kval rawmidi_cc_in ihandle`
+`kchanged, kchan, kval1, kval2 rawmidi_pitchbend_in ihandle`
+`kchanged, kchan, kval rawmidi_aftertouch_in ihandle`
+`kchanged, kchan, kkey, kval rawmidi_polyaftertouch_in ihandle`
+`kchanged, kchan, kval  rawmidi_programchange_in ihandle`
 
 Print a sysex message as Integers : 
 `sysex_print isize, iArr[]`
@@ -120,8 +120,6 @@ Now only the widget per zone is implemented with one widget.
 
 # Todo 
 
-* Unsuscribe methods (destructors, unload) for inputs 
-* Interpolate axis in wpz (z particularly) for better graphical representation
-* framerate engine for games and so.
 * Missing erae api functions (draw pixel, rectangle, boundaries, fingerstream etc)
 * Detect : short clic, double clic
+* Add "kchanged" to all midi inputs (channel messages and wpz widgets)

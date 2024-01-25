@@ -399,6 +399,7 @@ struct rawmidi_in : csnd::Plugin<3, 1>
             return NOTOK;
         }
         midiin->suscribe();
+        csound->plugin_deinit(this);
 
         queue.ringSize = 100;
         queue.ring = new MidiInApi::MidiMessage[ queue.ringSize ];
@@ -406,6 +407,12 @@ struct rawmidi_in : csnd::Plugin<3, 1>
         buf.resize(DEFAULT_IN_BUFFER_SIZE * DEFAULT_IN_BUFFER_COUNT);
         tmp_buf.resize(DEFAULT_IN_BUFFER_SIZE * DEFAULT_IN_BUFFER_COUNT);
         return kperf();
+    }
+
+    int deinit()
+    {
+        midiin->unsuscribe();
+        return OK;
     }
 
     int kperf() {
@@ -569,7 +576,7 @@ struct rawmidi_aftertouch_out : public rawmidi_2bytes_out<STATUS_AFTERTOUCH> {};
 
 
 template<uint8_t status>
-struct rawmidi_3bytes_in : csnd::Plugin<3,3>
+struct rawmidi_3bytes_in : csnd::Plugin<4,3>
 {
     int init()
     {
@@ -581,6 +588,7 @@ struct rawmidi_3bytes_in : csnd::Plugin<3,3>
         }
 
         midiin->suscribe();
+        csound->plugin_deinit(this);
 
         requested_channel = 255;
         requested_ident = 255;
@@ -603,6 +611,12 @@ struct rawmidi_3bytes_in : csnd::Plugin<3,3>
         return kperf();
     }
 
+    int deinit()
+    {
+        midiin->unsuscribe();
+        return OK;
+    }
+
     int kperf()
     {
         MidiInApi::MidiQueue &receiver_queue = midiin->get_queue();
@@ -617,22 +631,26 @@ struct rawmidi_3bytes_in : csnd::Plugin<3,3>
         }
         front = copy.front;
 
-        if(!queue.pop(&buf, &stamp)) {
-            return OK;
-        }
-        if( (buf[0] & status) == status) {
-            uint8_t channel = (uint8_t(buf[0]) & 0x0F) + 1;
-            uint8_t byte1 = uint8_t(buf[1]) & 0b01111111;
-            uint8_t byte2 = uint8_t(buf[2]) & 0b01111111;
+        outargs[0] = 0; // No change until found one 
+        // Check for first relevant message in the queue
+        while(queue.pop(&buf, &stamp)) {
+            if( (buf[0] & status) == status) {
+                uint8_t channel = (uint8_t(buf[0]) & 0x0F) + 1;
+                uint8_t byte1 = uint8_t(buf[1]) & 0b01111111;
+                uint8_t byte2 = uint8_t(buf[2]) & 0b01111111;
 
-            if(requested_channel < 17 && (channel != requested_channel))
-                return OK;
-            if(requested_ident < 128 && (byte1 != requested_ident))
-                return OK;
-            outargs[0] = channel;
-            outargs[1] = byte1;
-            outargs[2] = byte2;
+                if(requested_channel < 17 && (channel != requested_channel))
+                    continue;
+                if(requested_ident < 128 && (byte1 != requested_ident))
+                    continue;
+                outargs[0] = 1; // changed
+                outargs[1] = channel;
+                outargs[2] = byte1;
+                outargs[3] = byte2;
+                break;
+            }
         }
+
         return OK;
     }
 
@@ -646,7 +664,7 @@ struct rawmidi_3bytes_in : csnd::Plugin<3,3>
 
 
 template<uint8_t status>
-struct rawmidi_2bytes_in : csnd::Plugin<2,2>
+struct rawmidi_2bytes_in : csnd::Plugin<3,2>
 {
     int init()
     {
@@ -656,6 +674,9 @@ struct rawmidi_2bytes_in : csnd::Plugin<2,2>
             csound->init_error("Rawmidi -> Midi device is not found, make sure to pass a valid handle initialized with rawmidi_open_ in or out");
             return NOTOK;
         }
+
+        midiin->suscribe();
+        csound->plugin_deinit(this);
 
         requested_channel = 255;
         requested_ident = 255;
@@ -676,6 +697,12 @@ struct rawmidi_2bytes_in : csnd::Plugin<2,2>
         return kperf();
     }
 
+    int deinit()
+    {
+        midiin->unsuscribe();
+        return OK;
+    }
+
     int kperf()
     {
         MidiInApi::MidiQueue &receiver_queue = midiin->get_queue();
@@ -690,20 +717,24 @@ struct rawmidi_2bytes_in : csnd::Plugin<2,2>
         }
         front = copy.front;
 
-        if(!queue.pop(&buf, &stamp)) {
-            return OK;
-        }
-        if( (buf[0] & status) == status) {
-            uint8_t channel = (uint8_t(buf[0]) & 0x0F) + 1;
-            uint8_t byte1 = uint8_t(buf[1]) & 0b01111111;
+        outargs[0] = 0;
+        // Check for first relevant message in the queue
+        while(queue.pop(&buf, &stamp)) {
+            if( (buf[0] & status) == status) {
+                uint8_t channel = (uint8_t(buf[0]) & 0x0F) + 1;
+                uint8_t byte1 = uint8_t(buf[1]) & 0b01111111;
 
-            if(requested_channel < 17 && (channel != requested_channel))
-                return OK;
-            if(requested_ident < 128 && (byte1 != requested_ident))
-                return OK;
-            outargs[0] = channel;
-            outargs[1] = byte1;
+                if(requested_channel < 17 && (channel != requested_channel))
+                    continue;
+                if(requested_ident < 128 && (byte1 != requested_ident))
+                    continue;
+                outargs[0] = 1;
+                outargs[1] = channel;
+                outargs[2] = byte1;
+                break;
+            }
         }
+
         return OK;
     }
 
@@ -942,8 +973,14 @@ struct erae_wpz_base
         size_t s = unbitized7size(insize);
         out_buf.allocate(cs, s);
         midiin->suscribe();
+        cs->plugin_deinit(this);
 
         samples_to_refresh = cs->sr() / fps;
+    }
+
+    int deinit() {
+        midiin->unsuscribe();
+        return OK;
     }
 
     void set_fps(csnd::Csound *cs, uint8_t _fps)
@@ -1000,7 +1037,7 @@ struct erae_wpz_base
  * @return finger
  *
 **/
-struct erae_wpz_xyz : csnd::Plugin<5, 4>, erae_wpz_base
+struct erae_wpz_xyz : csnd::Plugin<6, 4>, erae_wpz_base
 {
     // Draw rectangle F0 00 21 50 00 01 00 01 01 01 04 22 ZONE XPOS YPOS WIDTH HEIGHT RED GREEN BLUE F7
     // Request boundary in init
@@ -1015,10 +1052,7 @@ struct erae_wpz_xyz : csnd::Plugin<5, 4>, erae_wpz_base
             c.mult(0.7);
         }
         inv_color = color{uint8_t(127-c.r), uint8_t(127-c.g), uint8_t(127-c.b) };
-
         prepare(csound, 14);
-
-        // Request boundaries :
         std::vector<uint8_t> msg = erae_messages::boundary_request(zone);
         midiout->sendMessage(&msg);
 
@@ -1040,7 +1074,6 @@ struct erae_wpz_xyz : csnd::Plugin<5, 4>, erae_wpz_base
             std::cout << "\n\nStart loop" << std::endl;
         for(size_t i = 0; i < 10; ++i)
         {
-
             std::cout << i << " finger : " << (int)fingerlist[i].finger << " - action " << (int)fingerlist[i].action << std::endl;
             if(fingerlist[i].action == fingerstream::action_t::click || fingerlist[i].action == fingerstream::action_t::slide) {
                 color cross_c = inv_color; //color::white();
@@ -1059,6 +1092,7 @@ struct erae_wpz_xyz : csnd::Plugin<5, 4>, erae_wpz_base
 
     int kperf()
     {
+        outargs[0] = 0;
         get_data();
         if(!queue.pop(&buf, &stamp)) {
             return OK;
@@ -1072,11 +1106,12 @@ struct erae_wpz_xyz : csnd::Plugin<5, 4>, erae_wpz_base
             midiout->sendMessage(&rect);
         } else if(erae_messages::is_proper_fingerstream(buf, zone)) {
             erae_messages::get_fingerstream( buf, width, height, stream_data, out_buf);
-            outargs[0] = stream_data.x;
-            outargs[1] = stream_data.y;
-            outargs[2] = stream_data.z;
-            outargs[3] = static_cast<int>(stream_data.action);
-            outargs[4] = static_cast<int>(stream_data.finger);
+            outargs[0] = 1;
+            outargs[1] = stream_data.x;
+            outargs[2] = stream_data.y;
+            outargs[3] = stream_data.z;
+            outargs[4] = static_cast<int>(stream_data.action);
+            outargs[5] = static_cast<int>(stream_data.finger);
 
             fingerstream &cur = fingerlist[stream_data.finger];
             ::memcpy(&cur, &stream_data, sizeof(fingerstream));
@@ -1108,6 +1143,7 @@ struct erae_wpz_xyz : csnd::Plugin<5, 4>, erae_wpz_base
  * @return changed : 1 or 0
  * @return row
  * @return col
+ * @return index (in array)
 **/
 // Configurable matrix
 struct erae_wpz_matrix : csnd::Plugin<5, 8>, erae_wpz_base
@@ -1571,7 +1607,7 @@ void csnd::on_load(Csound *csound) {
     csnd::plugin<decode_5bytes_float>(csound, "decode_floats", "k[]", "k[]ki", csnd::thread::ik);
 
     // WPZ is widget per zone, a set of widgets using one full API zone
-    csnd::plugin<erae_wpz_xyz>(csound, "erae_wpz_xyz", "kkkkk", "iiii[]", csnd::thread::ik);
+    csnd::plugin<erae_wpz_xyz>(csound, "erae_wpz_xyz", "kkkkkk", "iiii[]", csnd::thread::ik);
     csnd::plugin<erae_wpz_matrix>(csound, "erae_wpz_matrix", "k[]kkkk", "iiiiii[]i[]i", csnd::thread::ik);
     csnd::plugin<erae_wpz_matrix_getvalue>(csound, "erae_wpz_matrix_getvalue", "k", "k[]kkk", csnd::thread::ik);
     csnd::plugin<erae_wpz_matrix_dyn>(csound, "erae_wpz_matrix_dyn", "k[]kkkk", "iiiiii[]i[]ik[]", csnd::thread::ik);
@@ -1628,12 +1664,12 @@ void csnd::on_load(Csound *csound) {
     /** Side note : Do not share handles for input **/
     /** Due to this impossibility to share, a consumer count is kept in the handler structure to consume when each child consumed **/
     // kchannel, knote, kvel rawmidi_noteon_in ihandle
-    csnd::plugin<rawmidi_noteon_in>(csound, "rawmidi_noteon_in.ik", "kkk", "im", csnd::thread::ik);
-    csnd::plugin<rawmidi_noteoff_in>(csound, "rawmidi_noteon_in.ik", "kkk", "im", csnd::thread::ik);
-    csnd::plugin<rawmidi_cc_in>(csound, "rawmidi_cc_in.ik", "kkk", "im", csnd::thread::ik);
-    csnd::plugin<rawmidi_pitchbend_in>(csound, "rawmidi_pitchbend_in.ik", "kkk", "im", csnd::thread::ik);
-    csnd::plugin<rawmidi_polyaftertouch_in>(csound, "rawmidi_polyaftertouch_in.ik", "kkk", "im", csnd::thread::ik);
-    csnd::plugin<rawmidi_aftertouch_in>(csound, "rawmidi_aftertouch_in.ik", "kk", "im", csnd::thread::ik);
-    csnd::plugin<rawmidi_programchange_in>(csound, "rawmidi_programchange_in.ik", "kk", "im", csnd::thread::ik);
+    csnd::plugin<rawmidi_noteon_in>(csound, "rawmidi_noteon_in.ik", "kkkk", "im", csnd::thread::ik);
+    csnd::plugin<rawmidi_noteoff_in>(csound, "rawmidi_noteon_in.ik", "kkkk", "im", csnd::thread::ik);
+    csnd::plugin<rawmidi_cc_in>(csound, "rawmidi_cc_in.ik", "kkkk", "im", csnd::thread::ik);
+    csnd::plugin<rawmidi_pitchbend_in>(csound, "rawmidi_pitchbend_in.ik", "kkkk", "im", csnd::thread::ik);
+    csnd::plugin<rawmidi_polyaftertouch_in>(csound, "rawmidi_polyaftertouch_in.ik", "kkkk", "im", csnd::thread::ik);
+    csnd::plugin<rawmidi_aftertouch_in>(csound, "rawmidi_aftertouch_in.ik", "kkk", "im", csnd::thread::ik);
+    csnd::plugin<rawmidi_programchange_in>(csound, "rawmidi_programchange_in.ik", "kkk", "im", csnd::thread::ik);
 
 }
