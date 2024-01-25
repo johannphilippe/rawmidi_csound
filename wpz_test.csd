@@ -51,9 +51,9 @@ instr 1
 	iColor3[] fillarray 0, 127, 0
 	izone init 10
 	erae_clear(gimidi_out, izone)
-	kx, ky, kz, kact, kfinger erae_wpz_xyz gimidi_in, gimidi_out, izone, iColor1
-	kx2, ky2, kz2, kact2, kfinger2 erae_wpz_xyz gimidi_in, gimidi_out, izone+1, iColor2
-	kx3, ky3, kz3, kact3, kfinger3 erae_wpz_xyz gimidi_in, gimidi_out, izone+2, iColor3
+	kchanged, kx, ky, kz, kact, kfinger erae_wpz_xyz gimidi_in, gimidi_out, izone, iColor1
+	kchanged, kx2, ky2, kz2, kact2, kfinger2 erae_wpz_xyz gimidi_in, gimidi_out, izone+1, iColor2
+	kchanged, kx3, ky3, kz3, kact3, kfinger3 erae_wpz_xyz gimidi_in, gimidi_out, izone+2, iColor3
 
 	printk2 kact
 endin

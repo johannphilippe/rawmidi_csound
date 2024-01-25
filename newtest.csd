@@ -58,7 +58,7 @@ endin
 
 instr 2 ; inputs
 	ihandle = rawmidi_open_in(2, 2)
-	kch, knote, kvel rawmidi_noteon_in ihandle 
+	kchanged, kch, knote, kvel rawmidi_noteon_in ihandle 
 	printk2 kch
 	printk2 knote, 15
 	printk2 kvel, 30
@@ -67,7 +67,7 @@ endin
 instr 3 ; cc in 
 	Sins[], Souts[] rawmidi_list_devices 2
 	ihandle = rawmidi_open_in(2, 2)
-	kch, kctl, kval rawmidi_cc_in ihandle
+	kchanged, kch, kctl, kval rawmidi_cc_in ihandle
 	
 	printk2 kch
 	printk2 kctl, 15
@@ -85,8 +85,8 @@ endin
 
 instr 5 ; Test to see if several inputs of same handle are "stealing" or not >> CC
 	ihandle = rawmidi_open_in(2, 2)
-	kch, kctl, kval rawmidi_cc_in ihandle
-	kch2, kctl2, kval2 rawmidi_cc_in ihandle
+	kchanged, kch, kctl, kval rawmidi_cc_in ihandle
+	kchanged, kch2, kctl2, kval2 rawmidi_cc_in ihandle
 	
 	printk2 kch, 0
 	printk2 kctl, 15
@@ -101,8 +101,8 @@ endin
 instr 6 ; Test to see if several inputs of same handle are "stealing" or not >> Notes
 	ihandle = rawmidi_open_in(2, 2)
 	ihandle2 = rawmidi_open_in(2, 2)
-	kch, knote, kvel rawmidi_noteon_in ihandle 
-	kch2, knote2, kvel2 rawmidi_noteon_in ihandle2
+	kchanged, kch, knote, kvel rawmidi_noteon_in ihandle 
+	kchanged, kch2, knote2, kvel2 rawmidi_noteon_in ihandle2
 	
 	printk2 kch, 0
 	printk2 knote, 15
@@ -117,8 +117,8 @@ endin
 instr 7 ; Test to see if several inputs of same handle are "stealing" or not >> Notes
 	ihandle = rawmidi_open_in(2, 2)
 	ihandle2 = rawmidi_open_in(2, 2)
-	kch, knote, kvel rawmidi_noteon_in ihandle 
-	kch2, knote2, kvel2 rawmidi_cc_in ihandle2
+	kchanged, kch, knote, kvel rawmidi_noteon_in ihandle 
+	kchanged, kch2, knote2, kvel2 rawmidi_cc_in ihandle2
 	
 	printk2 kch, 0
 	printk2 knote, 15
@@ -132,12 +132,12 @@ endin
 */
 gihandle = rawmidi_open_in(2, 2)
 instr 8	
-	kch, knote, kvel rawmidi_noteon_in gihandle
+	kchanged, kch, knote, kvel rawmidi_noteon_in gihandle
 	printk2 kch
 	printk2 knote, 10
 	printk2 kvel, 20
 
-	kch2, knote2, kvel2 rawmidi_noteon_in gihandle
+	kchanged, kch2, knote2, kvel2 rawmidi_noteon_in gihandle
 	printk2 kch2, 40
 	printk2 knote2, 50
 	printk2 kvel2, 60

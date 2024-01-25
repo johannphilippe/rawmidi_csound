@@ -123,3 +123,4 @@ Now only the widget per zone is implemented with one widget.
 * Missing erae api functions (draw pixel, rectangle, boundaries, fingerstream etc)
 * Detect : short clic, double clic
 * Add "kchanged" to all midi inputs (channel messages and wpz widgets)
+* Add "rawmidi_note_in" : for both noteon and noteoff
