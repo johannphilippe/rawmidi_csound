@@ -31,10 +31,10 @@ List input and output devices :
 
 Open a port (in or out) to a physical or virtual device
 
-`ihandle rawmidi_in_open iport_num, iAPI_index`
-`ihandle rawmidi_out_open iport_num, iAPI_index`
-`ihandle rawmidi_virtual_in_open Sport_name, iAPI_index`
-`ihandle rawmidi_virtual_out_open Sport_name, iAPI_index`
+`ihandle rawmidi_open_in iport_num, iAPI_index`
+`ihandle rawmidi_open_out iport_num, iAPI_index`
+`ihandle rawmidi_open_virtual_in Sport_name, iAPI_index`
+`ihandle rawmidi_open_virtual_out Sport_name, iAPI_index`
 
 The returned handle correspond to a connection to the device. It will be used to send or retrieve MIDI stream.
 
@@ -127,7 +127,14 @@ Now only the widget per zone is implemented with one widget.
 
 # Todo 
 
-* Missing erae api functions (draw pixel, rectangle, boundaries, fingerstream etc)
-* Detect : short clic, double clic
-* Add "kchanged" to all midi inputs (channel messages and wpz widgets)
 * Add "rawmidi_note_in" : for both noteon and noteoff
+* Add "note forward" opcode to forward notes from specific channel/handle input to specific channel/handle output
+* MPE support :	https://d30pueezughrda.cloudfront.net/campaigns/mpe/mpespec.pdf
+
+MPE Spec : 
+	* MPE Configuration Message (MCM)
+    	* B0/BF 79 00 - B0/BF 64 06 - B0/BF 65 00 - B0/BF 06 mm
+    	* B0/BF for lower or upper zone 
+    	* mm is 0 for MPE off or number of channels (from 1 to F)
+		* Max 2 zones (the lower has master channel 1, upper has 16)
+	* MPE usual mode for polyphonic MIDI instruments is mode 3 : Omni off, poly > maximal polyphony	

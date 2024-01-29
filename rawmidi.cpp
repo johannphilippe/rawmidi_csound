@@ -21,9 +21,9 @@ using namespace std;
 */
 
 
-static constexpr const uint8_t STATUS_NOTEON = 0b10010000;
-static constexpr const uint8_t STATUS_NOTEOFF = 0b10000000;
-static constexpr const uint8_t STATUS_CC = 0b10110000;
+static constexpr const uint8_t STATUS_NOTEON = 0b10010000; // 144
+static constexpr const uint8_t STATUS_NOTEOFF = 0b10000000; //128
+static constexpr const uint8_t STATUS_CC = 0b10110000; // 176
 static constexpr const uint8_t STATUS_POLYAFTERTOUCH = 0b10100000;
 static constexpr const uint8_t STATUS_AFTERTOUCH = 0b11010000;
 static constexpr const uint8_t STATUS_PROGRAMCHANGE = 0b11000000;
@@ -145,7 +145,7 @@ struct sysex_print_hex : csnd::InPlug<2>
  *
 */
 
-constexpr static const size_t DEFAULT_IN_BUFFER_SIZE = 2048;
+constexpr static const size_t DEFAULT_IN_BUFFER_SIZE = 128;
 constexpr static const size_t DEFAULT_IN_BUFFER_COUNT = 4;
 
 static RtMidi::Api get_api_from_index(int index)
@@ -370,7 +370,7 @@ inline bool is_power_of_two(T n)
     return (i == 0) ? true : false;
 }
 
-struct rawmidi_in : csnd::Plugin<3, 1>
+struct rawmidi_in : csnd::Plugin<3, 2>
 {
     int init() {
         intptr_t ptr = reinterpret_cast<intptr_t>((long)inargs[0]);
@@ -384,7 +384,13 @@ struct rawmidi_in : csnd::Plugin<3, 1>
 
         queue.ringSize = 100;
         queue.ring = new MidiInApi::MidiMessage[ queue.ringSize ];
-        outargs.myfltvec_data(2).init(csound, DEFAULT_IN_BUFFER_SIZE * DEFAULT_IN_BUFFER_COUNT);
+
+
+        size_t bufsize = DEFAULT_IN_BUFFER_SIZE * DEFAULT_IN_BUFFER_COUNT;
+        if(in_count() > 1) 
+            bufsize = (int)inargs[1];
+        
+        outargs.myfltvec_data(2).init(csound, bufsize);
         buf.resize(DEFAULT_IN_BUFFER_SIZE * DEFAULT_IN_BUFFER_COUNT);
         tmp_buf.resize(DEFAULT_IN_BUFFER_SIZE * DEFAULT_IN_BUFFER_COUNT);
         return kperf();
@@ -554,8 +560,6 @@ struct rawmidi_polyaftertouch_out : public rawmidi_3bytes_out<STATUS_POLYAFTERTO
 struct rawmidi_programchange_out : public rawmidi_2bytes_out<STATUS_PROGRAMCHANGE> {};
 struct rawmidi_aftertouch_out : public rawmidi_2bytes_out<STATUS_AFTERTOUCH> {};
 
-
-
 template<uint8_t status>
 struct rawmidi_3bytes_in : csnd::Plugin<4,3>
 {
@@ -612,11 +616,10 @@ struct rawmidi_3bytes_in : csnd::Plugin<4,3>
         }
         front = copy.front;
 
-        outargs[0] = 0; // No change until found one 
         // Check for first relevant message in the queue
         while(queue.pop(&buf, &stamp)) {
-            if( (buf[0] & status) == status) {
-                uint8_t channel = (uint8_t(buf[0]) & 0x0F) + 1;
+            if( (buf[0] & 0xF0) == status) {
+                uint8_t channel = (uint8_t(buf[0]) & 0b00001111) + 1;
                 uint8_t byte1 = uint8_t(buf[1]) & 0b01111111;
                 uint8_t byte2 = uint8_t(buf[2]) & 0b01111111;
 
@@ -625,13 +628,13 @@ struct rawmidi_3bytes_in : csnd::Plugin<4,3>
                 if(requested_ident < 128 && (byte1 != requested_ident))
                     continue;
                 outargs[0] = 1; // changed
-                outargs[1] = channel;
-                outargs[2] = byte1;
-                outargs[3] = byte2;
-                break;
+                outargs[1] = (MYFLT)channel;
+                outargs[2] = (MYFLT)byte1;
+                outargs[3] = (MYFLT)byte2;
+                return OK;
             }
         }
-
+        outargs[0] = 0; // No change until found one 
         return OK;
     }
 
@@ -698,10 +701,9 @@ struct rawmidi_2bytes_in : csnd::Plugin<3,2>
         }
         front = copy.front;
 
-        outargs[0] = 0;
         // Check for first relevant message in the queue
         while(queue.pop(&buf, &stamp)) {
-            if( (buf[0] & status) == status) {
+            if( (buf[0] & 0xF0) == status) {
                 uint8_t channel = (uint8_t(buf[0]) & 0x0F) + 1;
                 uint8_t byte1 = uint8_t(buf[1]) & 0b01111111;
 
@@ -712,9 +714,11 @@ struct rawmidi_2bytes_in : csnd::Plugin<3,2>
                 outargs[0] = 1;
                 outargs[1] = channel;
                 outargs[2] = byte1;
-                break;
+                return OK;
             }
         }
+        outargs[0] = 0;
+        return OK;
 
         return OK;
     }
@@ -1656,8 +1660,8 @@ void csnd::on_load(Csound *csound) {
 
     /** Input **/
     // ksize, kdata[] rawmidi_in in_handle, [iApi_index]
-    csnd::plugin<rawmidi_in>(csound, "rawmidi_in", "kkk[]", "i", csnd::thread::ik);
-    csnd::plugin<rawmidi_in>(csound, "rawmidi_in", "iii[]", "i", csnd::thread::i);
+    csnd::plugin<rawmidi_in>(csound, "rawmidi_in", "kkk[]", "im", csnd::thread::ik);
+    csnd::plugin<rawmidi_in>(csound, "rawmidi_in", "iii[]", "im", csnd::thread::i);
 
     /** Output **/
     // rawmidi_out iout_handle, ksize, kdata[], [iApi_index]
@@ -1688,7 +1692,7 @@ void csnd::on_load(Csound *csound) {
     /** Due to this impossibility to share, a consumer count is kept in the handler structure to consume when each child consumed **/
     // kchannel, knote, kvel rawmidi_noteon_in ihandle
     csnd::plugin<rawmidi_noteon_in>(csound, "rawmidi_noteon_in.ik", "kkkk", "im", csnd::thread::ik);
-    csnd::plugin<rawmidi_noteoff_in>(csound, "rawmidi_noteon_in.ik", "kkkk", "im", csnd::thread::ik);
+    csnd::plugin<rawmidi_noteoff_in>(csound, "rawmidi_noteoff_in.ik", "kkkk", "im", csnd::thread::ik);
     csnd::plugin<rawmidi_cc_in>(csound, "rawmidi_cc_in.ik", "kkkk", "im", csnd::thread::ik);
     csnd::plugin<rawmidi_pitchbend_in>(csound, "rawmidi_pitchbend_in.ik", "kkkk", "im", csnd::thread::ik);
     csnd::plugin<rawmidi_polyaftertouch_in>(csound, "rawmidi_polyaftertouch_in.ik", "kkkk", "im", csnd::thread::ik);
