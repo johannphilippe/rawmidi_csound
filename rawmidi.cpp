@@ -284,7 +284,6 @@ private:
     MidiInApi::MidiQueue queue;
 };
 
-
 struct rawmidi_in_open : csnd::Plugin<1, 2>
 {
     int init() {
@@ -292,15 +291,6 @@ struct rawmidi_in_open : csnd::Plugin<1, 2>
         intptr_t ptr = reinterpret_cast<intptr_t>(midiin);
         outargs[0] = ptr;
         buf.resize(1024);
-        return OK;
-    }
-
-    int kperf() {
-        //while(midiin->get_queue().pop(&buf, &stamp)) {
-            // Do nothing, just empty the queue
-            // This is a critical spot, since this has to happen AFTER the queue has been consumed by input opcodes...
-            // Let's hope it works this way
-        //}
         return OK;
     }
 
@@ -317,15 +307,6 @@ struct rawmidi_virtual_in_open : csnd::Plugin<1, 2>
         intptr_t ptr = reinterpret_cast<intptr_t>(midiin);
         outargs[0] = ptr;
         buf.resize(1024);
-        return OK;
-    }
-    int kperf() {
-       // while(midiin->get_queue().pop(&buf, &stamp)) {
-            // Do nothing, just empty the queue
-            // This is a critical spot, since this has to happen AFTER the queue has been consumed by input opcodes...
-            // Let's hope it keeps working this way
-       // }
-
         return OK;
     }
     double stamp;
@@ -1030,6 +1011,7 @@ struct erae_wpz_base
  * @arg zone
  * @arg optional color (rgb array)
  *
+ * @return changed (0 or 1)
  * @return x
  * @return y
  * @return z
@@ -1139,8 +1121,8 @@ struct erae_wpz_xyz : csnd::Plugin<6, 4>, erae_wpz_base
  * @arg nrows
  * @arg ncols
  *
- * @return Matrix as array of arrays
  * @return changed : 1 or 0
+ * @return Matrix as array of arrays
  * @return row
  * @return col
  * @return index (in array)
@@ -1223,7 +1205,7 @@ struct erae_wpz_matrix : csnd::Plugin<5, 8>, erae_wpz_base
     {
         get_data();
         if(!queue.pop(&buf, &stamp)) {
-            outargs[1] = 0;
+            outargs[0] = 0;
             return OK;
         }
         if(erae_messages::is_proper_boundary_reply(buf, zone)) {
@@ -1271,9 +1253,9 @@ struct erae_wpz_matrix : csnd::Plugin<5, 8>, erae_wpz_base
             if(!selection_list[index].activated)
                 selection_list[index].value = 0;
 
-            csnd::Vector<MYFLT> &outs = outargs.vector_data<MYFLT>(0);
+            csnd::Vector<MYFLT> &outs = outargs.vector_data<MYFLT>(1);
             outs[index] = selection_list[index].value;
-            outargs[1] = 1;
+            outargs[0] = 1;
             outargs[2] = row;
             outargs[3] = col;
             outargs[4] = index;
@@ -1285,7 +1267,7 @@ struct erae_wpz_matrix : csnd::Plugin<5, 8>, erae_wpz_base
              }
             increment += csound->get_csound()->GetKsmps(csound->get_csound());
         } else {
-            outargs[1] = 0;
+            outargs[0] = 0;
         }
         return OK;
     }
@@ -1386,7 +1368,7 @@ struct erae_wpz_matrix_dyn : csnd::Plugin<5, 9>, erae_wpz_base
         bool newmessage = true;
         get_data();
         if(!queue.pop(&buf, &stamp)) {
-            outargs[1] = 0;
+            outargs[0] = 0;
             newmessage = false;
         }
         if(newmessage && erae_messages::is_proper_boundary_reply(buf, zone)) {
@@ -1434,15 +1416,15 @@ struct erae_wpz_matrix_dyn : csnd::Plugin<5, 9>, erae_wpz_base
             if(!selection_list[index].activated)
                 selection_list[index].value = 0;
 
-            csnd::Vector<MYFLT> &outs = outargs.vector_data<MYFLT>(0);
+            csnd::Vector<MYFLT> &outs = outargs.vector_data<MYFLT>(1);
             outs[index] = selection_list[index].value;
-            outargs[1] = 1;
+            outargs[0] = 1;
             outargs[2] = row;
             outargs[3] = col;
             outargs[4] = index;
 
         } else {
-            outargs[1] = 0;
+            outargs[0] = 0;
         }
         if(increment > samples_to_refresh)
         {
@@ -1585,6 +1567,68 @@ struct decode_5bytes_float : csnd::Plugin<1, 3>
     csnd::AuxMem<uint8_t> inbytes, outbytes;
 };
 
+struct sysex_text_to_arr : csnd::Plugin<2, 1>
+{
+    int init() {
+        csnd::Vector<MYFLT> &vec = outargs.vector_data<MYFLT>(1);
+        std::string s(inargs.str_data(0).data);
+        vec.init(csound, s.size());
+        outargs[0] = s.size();
+        for(size_t i = 0; i < s.size(); ++i)
+            vec[i] = MYFLT(s[i] & 0x7F);
+        return OK;
+    }
+};
+
+struct array_prepend : csnd::Plugin<2, 2>
+{
+    int init() {
+        csnd::Vector<MYFLT> &invec = inargs.vector_data<MYFLT>(1);
+        size_t size = invec.len() + 1;
+        outargs[0] = size;
+        csnd::Vector<MYFLT> &outvec = outargs.vector_data<MYFLT>(1);
+        outvec.init(csound, size);
+        outvec[0] = inargs[0];
+        for(size_t i = 0; i < invec.len(); ++i)
+            outvec[i+1] = invec[i];
+        return OK;
+    }
+};
+struct array_append : csnd::Plugin<2, 2>
+{
+    int init() {
+        csnd::Vector<MYFLT> &invec = inargs.vector_data<MYFLT>(0);
+        size_t size = invec.len() + 1;
+        outargs[0] = size;
+        csnd::Vector<MYFLT> &outvec = outargs.vector_data<MYFLT>(1);
+        outvec.init(csound, size);
+        for(size_t i = 0; i < invec.len(); ++i)
+            outvec[i] = invec[i];
+        outvec[size-1] = inargs[1];
+        return OK;
+    }
+
+};
+struct array_concat : csnd::Plugin<2, 2>
+{
+    int init() {
+        csnd::Vector<MYFLT> &invec1 = inargs.vector_data<MYFLT>(0);
+        csnd::Vector<MYFLT> &invec2 = inargs.vector_data<MYFLT>(1);
+        
+        size_t size = invec1.len() + invec2.len();
+        outargs[0] = size;
+        csnd::Vector<MYFLT> &outvec = outargs.vector_data<MYFLT>(1);
+        outvec.init(csound, size);
+        size_t cnt = 0;
+        for(; cnt < invec1.len(); ++cnt)
+            outvec[cnt] = invec1[cnt];
+        for(size_t i = 0; i < invec2.len(); ++i, ++cnt)
+            outvec[cnt] = invec2[i];
+        return OK;
+    }
+
+};
+
 void csnd::on_load(Csound *csound) {
     std::cout << "RawMIDI : RtMidi for Csound " << std::endl;
     std::cout << "Supported API's are : \n"
@@ -1597,31 +1641,16 @@ void csnd::on_load(Csound *csound) {
             <<   "\t6=WEB_MIDI_API, \n"
             <<   "\t7=NUM_APIS"
               << std::endl;
-
-    // Basinc ERAE Touch sysex API functions
-    csnd::plugin<erae_sysex_open>(csound, "erae_sysex_open", "", "iiii", csnd::thread::i);
-    csnd::plugin<erae_sysex_close>(csound, "erae_sysex_close", "", "i", csnd::thread::i);
-    csnd::plugin<erae_sysex_clear_zone>(csound, "erae_sysex_clear_zone", "", "ii", csnd::thread::i);
-
-    // Floats decoder for 7bitized float stream
-    csnd::plugin<decode_5bytes_float>(csound, "decode_floats", "k[]", "k[]ki", csnd::thread::ik);
-
-    // WPZ is widget per zone, a set of widgets using one full API zone
-    csnd::plugin<erae_wpz_xyz>(csound, "erae_wpz_xyz", "kkkkkk", "iiii[]", csnd::thread::ik);
-    csnd::plugin<erae_wpz_matrix>(csound, "erae_wpz_matrix", "k[]kkkk", "iiiiii[]i[]i", csnd::thread::ik);
-    csnd::plugin<erae_wpz_matrix_getvalue>(csound, "erae_wpz_matrix_getvalue", "k", "k[]kkk", csnd::thread::ik);
-    csnd::plugin<erae_wpz_matrix_dyn>(csound, "erae_wpz_matrix_dyn", "k[]kkkk", "iiiiii[]i[]ik[]", csnd::thread::ik);
-
     // Print and returns lists of input and output devices corresponding to the specified API
     csnd::plugin<rawmidi_list_devices>(csound, "rawmidi_list_devices", "S[]S[]", "i", csnd::thread::ik);
 
     /** Opening a device **/
     // ihandle rawmidi_in_open iport_num, [iapi_number]
-    csnd::plugin<rawmidi_in_open>(csound, "rawmidi_open_in.ik", "i", "ii", csnd::thread::ik);
+    csnd::plugin<rawmidi_in_open>(csound, "rawmidi_open_in.ii", "i", "ii", csnd::thread::i);
     // ihandle rawmidi_out_open iport_num, [iapi_number]
     csnd::plugin<rawmidi_out_open>(csound, "rawmidi_open_out.ii", "i", "ii", csnd::thread::i);
     // ihandle rawmidi_in_open Sport_name, [iapi_number]
-    csnd::plugin<rawmidi_virtual_in_open>(csound, "rawmidi_open_virtual_in.ik", "i", "Si", csnd::thread::ik);
+    csnd::plugin<rawmidi_virtual_in_open>(csound, "rawmidi_open_virtual_in.ii", "i", "Si", csnd::thread::i);
     // ihandle rawmidi_out_open Sport_name, [iapi_number]
     csnd::plugin<rawmidi_virtual_out_open>(csound, "rawmidi_open_virtual_out.ii", "i", "Si", csnd::thread::i);
 
@@ -1634,12 +1663,6 @@ void csnd::on_load(Csound *csound) {
     // rawmidi_out iout_handle, ksize, kdata[], [iApi_index]
     csnd::plugin<rawmidi_out>(csound, "rawmidi_out", "", "ikk[]", csnd::thread::ik);
     csnd::plugin<rawmidi_out>(csound, "rawmidi_out", "", "iii[]", csnd::thread::i);
-
-    // Facility for sysex handling
-    csnd::plugin<sysex_print>(csound, "sysex_print", "", "k[]k", csnd::thread::ik );
-    csnd::plugin<sysex_print>(csound, "sysex_print", "", "i[]i", csnd::thread::i );
-    csnd::plugin<sysex_print_hex>(csound, "sysex_print_hex", "", "k[]k", csnd::thread::ik );
-    csnd::plugin<sysex_print_hex>(csound, "sysex_print_hex", "", "i[]i", csnd::thread::i );
 
     /** Channel messages out **/
     // rawmidi_noteon_out ihandle, ichannel, inote, ivel
@@ -1672,4 +1695,36 @@ void csnd::on_load(Csound *csound) {
     csnd::plugin<rawmidi_aftertouch_in>(csound, "rawmidi_aftertouch_in.ik", "kkk", "im", csnd::thread::ik);
     csnd::plugin<rawmidi_programchange_in>(csound, "rawmidi_programchange_in.ik", "kkk", "im", csnd::thread::ik);
 
+    /**
+    Erae Touch utilities and widgets 
+    **/
+    // Basinc ERAE Touch sysex API functions
+    csnd::plugin<erae_sysex_open>(csound, "erae_sysex_open", "", "iiii", csnd::thread::i);
+    csnd::plugin<erae_sysex_close>(csound, "erae_sysex_close", "", "i", csnd::thread::i);
+    csnd::plugin<erae_sysex_clear_zone>(csound, "erae_sysex_clear_zone", "", "ii", csnd::thread::i);
+
+    // Floats decoder for 7bitized float stream
+    csnd::plugin<decode_5bytes_float>(csound, "decode_floats", "k[]", "k[]ki", csnd::thread::ik);
+
+    // WPZ is widget per zone, a set of widgets using one full API zone
+    csnd::plugin<erae_wpz_xyz>(csound, "erae_wpz_xyz", "kkkkkk", "iiii[]", csnd::thread::ik);
+    csnd::plugin<erae_wpz_matrix>(csound, "erae_wpz_matrix", "k[]kkkk", "iiiiii[]i[]i", csnd::thread::ik);
+    csnd::plugin<erae_wpz_matrix_getvalue>(csound, "erae_wpz_matrix_getvalue", "k", "k[]kkk", csnd::thread::ik);
+    csnd::plugin<erae_wpz_matrix_dyn>(csound, "erae_wpz_matrix_dyn", "k[]kkkk", "iiiiii[]i[]ik[]", csnd::thread::ik);
+
+    /** SYSEX Utilities **/
+    csnd::plugin<sysex_text_to_arr>(csound, "sysex_text_to_bytes", "ii[]", "S", csnd::thread::i);
+    //csnd::plugin<sysex_compose>(csound, "sysex_compose", "ii[]", "M", csnd::thread::i);
+
+    // Facility for sysex handling
+    csnd::plugin<sysex_print>(csound, "sysex_print", "", "k[]k", csnd::thread::ik );
+    csnd::plugin<sysex_print>(csound, "sysex_print", "", "i[]i", csnd::thread::i );
+    csnd::plugin<sysex_print_hex>(csound, "sysex_print_hex", "", "k[]k", csnd::thread::ik );
+    csnd::plugin<sysex_print_hex>(csound, "sysex_print_hex", "", "i[]i", csnd::thread::i );
+
+    /** Array utilities for sysex **/
+    csnd::plugin<array_append>(csound, "array_append", "ii[]", "i[]i", csnd::thread::i);
+    csnd::plugin<array_prepend>(csound, "array_prepend", "ii[]", "ii[]", csnd::thread::i);
+    csnd::plugin<array_concat>(csound, "array_concat", "ii[]", "i[]i[]", csnd::thread::i);
 }
+

@@ -38,7 +38,6 @@ Open a port (in or out) to a physical or virtual device
 
 The returned handle correspond to a connection to the device. It will be used to send or retrieve MIDI stream.
 
-
 Receive or send raw MIDI stream : 
 
 `kchanged, ksize, kdata[] rawmidi_in ihandle`
@@ -88,6 +87,14 @@ Print a sysex message as Integers :
 Print a sysex message in hexadecimal format :
 `sysex_print_hex isize, iArr[]`
 `sysex_print_hex ksize, kArr[]`
+
+Convert text to byte array : 
+`ilen, iBytes[] sysex_text_to_bytes Stext`
+
+Array utilities to compose sysex : 
+`ilen, iArr[] array_prepend ipre, iArrToPrepend[]`
+`ilen, iArr[] array_append iArrToAppend[], iapp`
+`ilen, iArr[] array_concat iArr1[], iArr2[]`
 
 # Build and install
 
