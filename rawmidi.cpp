@@ -3,6 +3,7 @@
 #include<modload.h>
 #include<OpcodeBase.hpp>
 #include"rtmidi/RtMidi.h"
+#include "rtmidi/rtmidi_c.h"
 
 using namespace std;
 
@@ -141,71 +142,160 @@ struct sysex_print_hex : csnd::InPlug<2>
 };
 /*
  *  RawMIDI
- *
+ *  & RtMidi Adapters
  *
 */
 
 constexpr static const size_t DEFAULT_IN_BUFFER_SIZE = 128;
 constexpr static const size_t DEFAULT_IN_BUFFER_COUNT = 4;
 
-static RtMidi::Api get_api_from_index(int index)
+static RtMidiApi get_api_from_index(int index)
 {
+
     switch (index) {
-    case 0:
-        return RtMidi::Api::UNSPECIFIED;
-    case 1:
-        return RtMidi::Api::MACOSX_CORE;
-    case 2:
-        return RtMidi::Api::LINUX_ALSA;
-    case 3:
-        return RtMidi::Api::UNIX_JACK;
-    case 4:
-        return RtMidi::Api::WINDOWS_MM;
-    case 5:
-        return RtMidi::Api::RTMIDI_DUMMY;
-    case 6:
-        return RtMidi::Api::WEB_MIDI_API;
-    case 7:
-        return RtMidi::Api::NUM_APIS;
-    default:
-        return RtMidi::Api::UNSPECIFIED;
+        case 0:
+            return RtMidiApi::RTMIDI_API_UNSPECIFIED;
+        case 1:
+            return RtMidiApi::RTMIDI_API_MACOSX_CORE;
+        case 2:
+            return RtMidiApi::RTMIDI_API_LINUX_ALSA;
+        case 3:
+            return RtMidiApi::RTMIDI_API_UNIX_JACK;
+        case 4:
+            return RtMidiApi::RTMIDI_API_WINDOWS_MM;
+        case 5:
+            return RtMidiApi::RTMIDI_API_RTMIDI_DUMMY;
+        case 6:
+            return RtMidiApi::RTMIDI_API_NUM;
+        default: 
+            return RtMidiApi::RTMIDI_API_UNSPECIFIED;
     }
 }
 
 struct  rawmidi_list_devices : csnd::Plugin<2, 1>
 {
     int init() {
+        buf.allocate(csound, 512);
 
         csnd::Vector<STRINGDAT> &in_ports = outargs.vector_data<STRINGDAT>(0);
         csnd::Vector<STRINGDAT> &out_ports = outargs.vector_data<STRINGDAT>(1);
 
         int api_nbr = (int)inargs[0];
-        RtMidiIn midiin(get_api_from_index(api_nbr));
-        int nports = midiin.getPortCount();
+        RtMidiInPtr midiin = rtmidi_in_create(get_api_from_index(api_nbr), "Client Name", 1024);
+        int nports = rtmidi_get_port_count(midiin); //midiin.getPortCount();
 
         in_ports.init(csound, nports);
         csound->message(">>> Input ports : ");
+        int len;
         for(int i = 0; i < nports; ++i)
         {
-            in_ports[i].data = csound->strdup((char *) midiin.getPortName(i).c_str());
-            in_ports[i].size = midiin.getPortName(i).size();
-            csound->message("\tPort " + std::to_string(i) + " : " + midiin.getPortName(i));
+            rtmidi_get_port_name(midiin, i, buf.data(), &len);
+            in_ports[i].data = csound->strdup((char *)buf.data());
+            in_ports[i].size = len;
+            csound->message("\tPort " + std::to_string(i) + " : " + in_ports[i].data);
         }
-
-        RtMidiOut midiout(get_api_from_index(api_nbr));
-        nports = midiout.getPortCount();
-
+        RtMidiOutPtr midiout = rtmidi_out_create(get_api_from_index(api_nbr), "Client Name");
+        nports = rtmidi_get_port_count(midiout);
         out_ports.init(csound, nports);
         csound->message(">>> Output ports : ");
         for(int i = 0; i < nports; ++i) {
-            out_ports[i].data = csound->strdup((char *) midiout.getPortName(i).c_str());
-            out_ports[i].size = midiout.getPortName(i).size();
-            csound->message("\tPort " + std::to_string(i) + " : " + midiout.getPortName(i));
+
+            rtmidi_get_port_name(midiin, i, buf.data(), &len);
+            out_ports[i].data = csound->strdup((char *)buf.data());
+            out_ports[i].size = len;
+            csound->message("\tPort " + std::to_string(i) + " : " + out_ports[i].data);
         }
         return OK;
     }
 
+    csnd::AuxMem<char> buf; 
 };
+
+/*
+    Csound AuxMem based Queue
+
+*/
+ 
+template<typename T>
+struct cs_queue 
+{
+    cs_queue() {}
+
+    cs_queue(csnd::Csound *cs, size_t bsize)
+        : front(0)
+        , back(0)
+        , ringsize(0)
+    {
+        _data.allocate(cs, bsize);
+    }
+
+    void prealloc(csnd::Csound *cs, size_t len, T* mem)
+    {
+        front = 0;
+        back = 0;
+        _data = mem;
+        ringsize = len;
+    }
+
+    void allocate(csnd::Csound *cs, size_t bsize)
+    {
+        front = 0;
+        back = 0;
+        ringsize = bsize;
+        _data.allocate(cs, bsize);
+    }
+
+    size_t size(size_t *__back, size_t *__front)
+    {
+        size_t _back = back, _front = front, _size;
+        if(back >= _front)
+            _size = _back - _front;
+        else 
+            _size = ringsize - _front + _back;
+        
+        if(__back) * __back = _back;
+        if(__front) *__front = _front;
+        return _size;
+
+    }
+
+    bool push(const T *buf)
+    {
+        size_t _back, _front, _size; 
+        _size = size(&_back, &_front);
+        if(_size < ringsize - 1)
+        {
+            _data[_back] = *buf;
+            back = (back + 1) % ringsize;
+            return true;
+        }
+
+        return false;
+    }
+    bool pop(T *buf, double *timestamp) 
+    {
+        size_t _back, _front, _size;
+        _size = size(&_back, &_front);
+        if(_size == 0)
+            return false;
+        
+        *buf = _data[_front];
+        front = (front + 1) % ringsize;
+        return true;
+
+    }
+
+    size_t front, back, ringsize;
+    csnd::AuxMem<T> _data;
+};
+
+struct cs_midi_msg
+{
+    const unsigned char* data;
+    size_t size;
+    double timestamp;
+};
+
 
 /**
  * RtMidiInDispatcher
@@ -213,89 +303,127 @@ struct  rawmidi_list_devices : csnd::Plugin<2, 1>
  * It is instanciated by rawmidi_in_open
  * Each suscriber (midi in opcode using this handle) will read from the queue.
 **/
+
+
 class RtMidiInDispatcher
 {
 public:
-    // Physical port
-    RtMidiInDispatcher(csnd::Csound * cs, size_t port, size_t api)
-        : buf(1024)
+    RtMidiInDispatcher(csnd::Csound *cs, size_t port, size_t api, csnd::AuxMem<unsigned char> *_buf, cs_queue<cs_midi_msg> *_q)
     {
-        midiin = new RtMidiIn(get_api_from_index(api));
-        if(port >= midiin->getPortCount())
-            cs->init_error("MidiIn Port is not valid");
-
-        midiin->openPort(port);
-        midiin->ignoreTypes(false, true, false);
-        midiin->setBufferSize(DEFAULT_IN_BUFFER_SIZE*4, DEFAULT_IN_BUFFER_COUNT*4);
-
-
-        queue.ringSize = 100;
-        queue.ring = new MidiInApi::MidiMessage[ queue.ringSize ];
-        void * uData = (void *)&queue;
-        midiin->setCallback([](double stamp, std::vector<unsigned char> *vec, void* udata) {
-            MidiInApi::MidiQueue *queue = (MidiInApi::MidiQueue *)udata;
-            MidiInApi::MidiMessage msg;
-            msg.bytes = *vec;
-            msg.timeStamp = stamp;
-            queue->push(msg);
-        }, uData);
-    }
-    // Virtual Port
-    RtMidiInDispatcher(csnd::Csound * cs, std::string port, size_t api)
-        :buf(1024)
-    {
-        midiin = new RtMidiIn(get_api_from_index(api));
-        if(midiin->getPortCount() == 0) {
+        buf = _buf;
+        queue = _q;
+        queue->ringsize = 100;
+        midiin = rtmidi_in_create(get_api_from_index(api), "Client Name", 1024);
+        if(rtmidi_get_port_count(midiin) == 0) {
             cs->init_error("No port found");
         }
-        midiin->openVirtualPort(port);
-        midiin->ignoreTypes(false, true, false);
-        midiin->setBufferSize(DEFAULT_IN_BUFFER_SIZE*4, DEFAULT_IN_BUFFER_COUNT*4);
 
-        queue.ringSize = 100;
-        queue.ring = new MidiInApi::MidiMessage[ queue.ringSize ];
-        void * uData = (void *)&queue;
-        midiin->setCallback([](double stamp, std::vector<unsigned char> *vec, void* udata) {
-            MidiInApi::MidiQueue *queue = (MidiInApi::MidiQueue *)udata;
-            MidiInApi::MidiMessage msg;
-            msg.bytes = *vec;
-            msg.timeStamp = stamp;
-            queue->push(msg);
-        }, uData);
+        rtmidi_open_port(midiin, port, "Input Port");
+        rtmidi_in_ignore_types(midiin, false, true, false);
+
+        void * uData = (void *)queue;
+        rtmidi_in_set_callback(midiin, [](double timestamp, const unsigned char *msg, size_t msg_size, void *userData) {
+            cs_queue<cs_midi_msg> *q = (cs_queue<cs_midi_msg>*)userData;
+            cs_midi_msg _msg{msg, msg_size, timestamp};
+            q->push(&_msg);
+            
+        }, uData);        
     }
 
-    MidiInApi::MidiQueue &get_queue() {return queue;}
+    /*    
+    // Physical port
+    RtMidiInDispatcher(csnd::Csound * cs, size_t port, size_t api)
+        : queue(cs, 100)
+    {
+        buf.allocate(cs, 1024);
+
+        queue.ringsize = 100;
+
+        std::cout << "Allocated" << std::endl;
+        midiin = rtmidi_in_create(get_api_from_index(api), "Client Name", 1024);
+        std::cout << "Created" << std::endl;
+
+        if(rtmidi_get_port_count(midiin) == 0) {
+            cs->init_error("No port found");
+        }
+
+        rtmidi_open_port(midiin, port, "Input Port");
+        rtmidi_in_ignore_types(midiin, false, true, false);
+
+        queue.ringsize = 100;
+        void * uData = (void *)&queue;
+        rtmidi_in_set_callback(midiin, [](double timestamp, const unsigned char *msg, size_t msg_size, void *userData) {
+            cs_queue<cs_midi_msg> *q = (cs_queue<cs_midi_msg>*)userData;
+            cs_midi_msg _msg{msg, msg_size, timestamp};
+            q->push(&_msg);
+            
+        }, uData);        
+    }
+    */
+
+    // Virtual Port
+    RtMidiInDispatcher(csnd::Csound * cs, std::string port, size_t api, csnd::AuxMem<unsigned char> *_buf, cs_queue<cs_midi_msg> *_q)
+    {
+        buf = _buf;
+        queue = _q;
+        queue->ringsize = 100;
+        midiin = rtmidi_in_create(get_api_from_index(api), "Client Name", 1024);
+        if(rtmidi_get_port_count(midiin) == 0) {
+            cs->init_error("No port found");
+        }
+
+        rtmidi_open_virtual_port(midiin, port.c_str());
+        rtmidi_in_ignore_types(midiin, false, true, false);
+
+        void * uData = (void *)queue;
+        rtmidi_in_set_callback(midiin, [](double timestamp, const unsigned char *msg, size_t msg_size, void *userData) {
+            cs_queue<cs_midi_msg> *q = (cs_queue<cs_midi_msg>*)userData;
+            cs_midi_msg _msg{msg, msg_size, timestamp};
+            q->push(&_msg);
+            
+        }, uData);        
+    }
+
+    cs_queue<cs_midi_msg> &get_queue() {return (cs_queue<cs_midi_msg>&) *queue;}
 
     void use() {
+        cs_midi_msg _msg{buf->data(), buf->len(), 0};
         use_count = (use_count + 1) % suscribed;
+        std::cout << "use count : " << use_count << std::endl;
         if(use_count == 0) {
-            while(queue.pop(&buf, &stamp)) {}
+            while(queue->pop(&_msg, &stamp)) {}
         }
     }
     void suscribe() {suscribed++;}
     void unsuscribe() {if(suscribed > 0) suscribed--;}
 
 private:
-    std::vector<unsigned char> buf;
     double stamp;
     size_t use_count = 0;
     size_t suscribed = 0;
-    RtMidiIn *midiin;
-    MidiInApi::MidiQueue queue;
+
+    RtMidiInPtr midiin;
+    csnd::AuxMem<unsigned char> *buf;
+    cs_queue<cs_midi_msg> *queue;
 };
 
 struct rawmidi_in_open : csnd::Plugin<1, 2>
 {
     int init() {
-        midiin = new RtMidiInDispatcher(csound, (size_t)inargs[0], (size_t)inargs[1]);
+        buf.allocate(csound, 1024);
+        dispatcher_buf.allocate(csound, 1024);
+        dispatcher_queue.allocate(csound, 100);
+        midiin = new RtMidiInDispatcher(csound, (size_t)inargs[0], (size_t)inargs[1], &dispatcher_buf, &dispatcher_queue);
         intptr_t ptr = reinterpret_cast<intptr_t>(midiin);
         outargs[0] = ptr;
-        buf.resize(1024);
         return OK;
     }
 
     double stamp;
-    std::vector<unsigned char> buf;
+    csnd::AuxMem<unsigned char> buf;
+
+    csnd::AuxMem<unsigned char> dispatcher_buf;
+    cs_queue<cs_midi_msg> dispatcher_queue;
     RtMidiInDispatcher *midiin = nullptr;
 };
 
@@ -303,14 +431,19 @@ struct rawmidi_in_open : csnd::Plugin<1, 2>
 struct rawmidi_virtual_in_open : csnd::Plugin<1, 2>
 {
     int init() {
-        midiin = new RtMidiInDispatcher(csound, inargs.str_data(0).data, (size_t)inargs[1]);
+        buf.allocate(csound, 1024);
+        dispatcher_buf.allocate(csound, 1024);
+        dispatcher_queue.allocate(csound, 100);
+        midiin = new RtMidiInDispatcher(csound, inargs.str_data(0).data, (size_t)inargs[1], &dispatcher_buf, &dispatcher_queue);
         intptr_t ptr = reinterpret_cast<intptr_t>(midiin);
         outargs[0] = ptr;
-        buf.resize(1024);
         return OK;
     }
     double stamp;
-    std::vector<unsigned char> buf;
+    csnd::AuxMem<unsigned char> buf;
+
+    csnd::AuxMem<unsigned char> dispatcher_buf;
+    cs_queue<cs_midi_msg> dispatcher_queue;
     RtMidiInDispatcher *midiin = nullptr;
 };
 
@@ -318,32 +451,35 @@ struct rawmidi_virtual_out_open : csnd::Plugin<1, 2>
 {
     int init() {
         if(in_count() > 1)
-            midiout = new RtMidiOut(get_api_from_index(static_cast<int>(inargs[1])));
+            midiout = rtmidi_out_create(get_api_from_index(static_cast<int>(inargs[1])), "Client Name"); //new RtMidiOut(get_api_from_index(static_cast<int>(inargs[1])));
         else
-            midiout = new RtMidiOut();
+            midiout = rtmidi_out_create_default();
 
-        unsigned int nports = midiout->getPortCount();
+        unsigned int nports = rtmidi_get_port_count(midiout); //midiout->getPortCount();
         if(nports == 0) {
            csound->init_error("No ports available");
            return NOTOK;
         }
-        midiout->openVirtualPort(inargs.str_data(0).data);
+        
+        rtmidi_open_virtual_port(midiout, inargs.str_data(0).data);
+        //midiout->openVirtualPort(inargs.str_data(0).data);
         outargs[0] = reinterpret_cast<intptr_t>(midiout);
         return OK;
     }
 
-    RtMidiOut *midiout = nullptr;
+    RtMidiOutPtr midiout;
+    //RtMidiOut *midiout = nullptr;
 };
 
 struct rawmidi_out_open : csnd::Plugin<1, 2>
 {
     int init() {
         if(in_count() > 1)
-            midiout = new RtMidiOut(get_api_from_index(static_cast<int>(inargs[1])));
+            midiout = rtmidi_out_create(get_api_from_index(static_cast<int>(inargs[1])), "Client Name"); //new RtMidiOut(get_api_from_index(static_cast<int>(inargs[1])));
         else
-            midiout = new RtMidiOut();
+            midiout = rtmidi_out_create_default();
 
-        unsigned int nports = midiout->getPortCount();
+        unsigned int nports = rtmidi_get_port_count(midiout); //midiout->getPortCount();
         if(nports == 0) {
            csound->init_error("No ports available");
            return NOTOK;
@@ -354,12 +490,12 @@ struct rawmidi_out_open : csnd::Plugin<1, 2>
             return NOTOK;
         }
 
-        midiout->openPort(port_num);
+        rtmidi_open_port(midiout, port_num, "Outport Name");
         outargs[0] = reinterpret_cast<intptr_t>(midiout);
         return OK;
     }
 
-    RtMidiOut *midiout = nullptr;
+    RtMidiOutPtr midiout;
 };
 
 template<typename T>
@@ -382,17 +518,15 @@ struct rawmidi_in : csnd::Plugin<3, 2>
         midiin->suscribe();
         csound->plugin_deinit(this);
 
-        queue.ringSize = 100;
-        queue.ring = new MidiInApi::MidiMessage[ queue.ringSize ];
-
+        queue.allocate(csound, 100);
 
         size_t bufsize = DEFAULT_IN_BUFFER_SIZE * DEFAULT_IN_BUFFER_COUNT;
         if(in_count() > 1) 
             bufsize = (int)inargs[1];
         
         outargs.myfltvec_data(2).init(csound, bufsize);
-        buf.resize(DEFAULT_IN_BUFFER_SIZE * DEFAULT_IN_BUFFER_COUNT);
-        tmp_buf.resize(DEFAULT_IN_BUFFER_SIZE * DEFAULT_IN_BUFFER_COUNT);
+        buf.allocate(csound, DEFAULT_IN_BUFFER_SIZE * DEFAULT_IN_BUFFER_COUNT);
+        tmp_buf.allocate(csound, DEFAULT_IN_BUFFER_SIZE * DEFAULT_IN_BUFFER_COUNT);
         return kperf();
     }
 
@@ -403,36 +537,32 @@ struct rawmidi_in : csnd::Plugin<3, 2>
     }
 
     int kperf() {
-        MidiInApi::MidiQueue &receiver_queue = midiin->get_queue();
-        MidiInApi::MidiQueue copy(receiver_queue);
+        cs_queue<cs_midi_msg>& receiver_queue = midiin->get_queue(); 
         midiin->use();
-        copy.front = front;
-
-        while(copy.pop(&tmp_buf, &stamp)) {
-            MidiInApi::MidiMessage msg;
-            msg.bytes = tmp_buf;
-            msg.timeStamp = stamp;
-            queue.push(msg);
+        receiver_queue.front = front;
+        cs_midi_msg _msg{tmp_buf.data(), tmp_buf.len(), 0};
+        while(receiver_queue.pop(&_msg, &stamp)) {
+            queue.push(&_msg);
         }
-        front = copy.front;
-
-        if(!queue.pop(&buf, &stamp)) {
-            outargs[0] = 0; // no change
+        front = receiver_queue.front;
+        if(!queue.pop(&_msg, &stamp)) 
+        {
+            outargs[0] = 0;
+            std::cout << "nothing" << std::endl;
             return OK;
         }
-
-        outargs[0] = 1; // changed // new message
-        outargs[1] = buf.size();
-        for(size_t i = 0; i < buf.size(); ++i)
-        {
-            outargs.myfltvec_data(2).data_array()[i] = buf[i];
-        }
+        outargs[0] = 1;
+        outargs[1] = _msg.size;
+        std::cout << "msg size " << _msg.size << std::endl;
+        for(size_t i = 0; i < _msg.size; ++i)
+            outargs.myfltvec_data(2).data_array()[i] = _msg.data[i];
         return OK;
     }
+
+    csnd::AuxMem<unsigned char> buf, tmp_buf;
+    cs_queue<cs_midi_msg> queue;
     double stamp;
-    std::vector<unsigned char> buf, tmp_buf;
     RtMidiInDispatcher *midiin;
-    MidiInApi::MidiQueue queue;
     unsigned int front;
 };
 
@@ -448,8 +578,9 @@ inline void bit7(std::vector<unsigned char> &buf)
 struct rawmidi_out : csnd::InPlug<3>
 {
     int init() {
+        buf.allocate(csound, 1024);
         intptr_t ptr = reinterpret_cast<intptr_t>((long)args[0]);
-        midiout = reinterpret_cast<RtMidiOut *>(ptr);
+        midiout = reinterpret_cast<RtMidiOutPtr>(ptr);
         if(midiout == nullptr)
         {
             csound->init_error("Pointer to midi device is null");
@@ -460,22 +591,21 @@ struct rawmidi_out : csnd::InPlug<3>
 
     int kperf()
     {
-        buf.clear();
-        for(size_t i = 0; i < args[1]; ++i)
+        const int msg_len = args[1]; 
+        for(size_t i = 0; i < msg_len; ++i)
         {
-            buf.push_back(static_cast<unsigned char>(args.myfltvec_data(2)[i]));
+            buf[i] = args.myfltvec_data(2)[i];
             if(i > 0 && i < (args[1]-1))
                 buf[i] = buf[i] & 0b01111111;
         }
 
-        std::cout << "Midiout " << int(buf[11]) << " " << int(buf[12]) << std::endl;
-        midiout->sendMessage(&buf);
+        rtmidi_out_send_message(midiout, buf.data(), msg_len);
         return OK;
     }
 
 
-    std::vector<unsigned char> buf;
-    RtMidiOut *midiout;
+    csnd::AuxMem<unsigned char>buf;
+    RtMidiOutPtr midiout;
     double stamp;
 };
 
@@ -484,7 +614,8 @@ struct rawmidi_3bytes_out : csnd::InPlug<4>
 {
     int init() {
         intptr_t ptr = reinterpret_cast<intptr_t>((long)args[0]);
-        midiout = reinterpret_cast<RtMidiOut *>(ptr);
+        midiout = reinterpret_cast<RtMidiOutPtr>(ptr);
+        msg.allocate(csound, 3);
         if(midiout == nullptr) {
             csound->init_error("Rawmidi -> Midi device is not found, make sure to pass a valid handle initialized with rawmidi_open____");
             return NOTOK;
@@ -504,7 +635,7 @@ struct rawmidi_3bytes_out : csnd::InPlug<4>
         byte3 = ((unsigned char)(uint8_t)args[3]) & 0b01111111;
         msg[1] = byte2;
         msg[2] = byte3;
-        midiout->sendMessage(msg, 3);
+        rtmidi_out_send_message(midiout, msg.data(), 3);
         return OK;
     }
 
@@ -513,8 +644,8 @@ struct rawmidi_3bytes_out : csnd::InPlug<4>
     // To 255 for equality check >
     uint8_t channel = 255;
     uint8_t byte2 = 255, byte3 = 255;
-    RtMidiOut *midiout;
-    unsigned char msg[3];
+    RtMidiOutPtr midiout;
+    csnd::AuxMem<unsigned char> msg;
 };
 
 template<uint8_t status>
@@ -522,7 +653,8 @@ struct rawmidi_2bytes_out : csnd::InPlug<3>
 {
     int init() {
         intptr_t ptr = reinterpret_cast<intptr_t>((long)args[0]);
-        midiout = reinterpret_cast<RtMidiOut *>(ptr);
+        midiout = reinterpret_cast<RtMidiOutPtr>(ptr);
+        msg.allocate(csound, 2);
         if(midiout == nullptr) {
             csound->init_error("Rawmidi -> Midi device is not found, make sure to pass a valid handle initialized with rawmidi_open____");
             return NOTOK;
@@ -540,7 +672,7 @@ struct rawmidi_2bytes_out : csnd::InPlug<3>
         msg[0] = status_byte;
         byte2 = ((unsigned char)(uint8_t)args[2]) & 0b01111111;
         msg[1] = byte2;
-        midiout->sendMessage(msg, 2);
+        rtmidi_out_send_message(midiout, msg.data(), 2);
         return OK;
     }
 
@@ -548,8 +680,8 @@ struct rawmidi_2bytes_out : csnd::InPlug<3>
     // To 255 for equality check >
     uint8_t channel = 255;
     uint8_t byte2 = 255;
-    RtMidiOut *midiout;
-    unsigned char msg[2];
+    RtMidiOutPtr midiout;
+    csnd::AuxMem<unsigned char> msg;
 };
 
 struct rawmidi_noteon_out : public rawmidi_3bytes_out<STATUS_NOTEON> {};
@@ -578,10 +710,11 @@ struct rawmidi_3bytes_in : csnd::Plugin<4,3>
         requested_channel = 255;
         requested_ident = 255;
 
-        buf.resize(128);
-        tmp_buf.resize(128);
-        queue.ringSize = 100;
-        queue.ring = new MidiInApi::MidiMessage[ queue.ringSize ];
+        buf.allocate(csound, 128);
+        tmp_buf.allocate(csound, 128);
+
+        queue.allocate(csound, 100);
+        queue.ringsize = 100;
 
         if(in_count() > 1)
         {
@@ -604,24 +737,25 @@ struct rawmidi_3bytes_in : csnd::Plugin<4,3>
 
     int kperf()
     {
-        MidiInApi::MidiQueue &receiver_queue = midiin->get_queue();
-        MidiInApi::MidiQueue copy(receiver_queue);
+        cs_queue<cs_midi_msg> &receiver_queue = midiin->get_queue();
+
         midiin->use();
-        copy.front = front;
-        while(copy.pop(&tmp_buf, &stamp)) {
-            MidiInApi::MidiMessage msg;
-            msg.bytes = tmp_buf;
-            msg.timeStamp = stamp;
-            queue.push(msg);
+        receiver_queue.front = front;
+        cs_midi_msg _msg{tmp_buf.data(), tmp_buf.len(), 0};
+
+        while(receiver_queue.pop(&_msg, &stamp)) {
+            _msg.timestamp = stamp;
+            //msg.bytes = tmp_buf;
+            queue.push(&_msg);
         }
-        front = copy.front;
+        front = receiver_queue.front;
 
         // Check for first relevant message in the queue
-        while(queue.pop(&buf, &stamp)) {
-            if( (buf[0] & 0xF0) == status) {
-                uint8_t channel = (uint8_t(buf[0]) & 0b00001111) + 1;
-                uint8_t byte1 = uint8_t(buf[1]) & 0b01111111;
-                uint8_t byte2 = uint8_t(buf[2]) & 0b01111111;
+        while(queue.pop(&_msg, &stamp)) {
+            if( (_msg.data[0] & 0xF0) == status) {
+                uint8_t channel = (uint8_t(_msg.data[0]) & 0b00001111) + 1;
+                uint8_t byte1 = uint8_t(_msg.data[1]) & 0b01111111;
+                uint8_t byte2 = uint8_t(_msg.data[2]) & 0b01111111;
 
                 if(requested_channel < 17 && (channel != requested_channel))
                     continue;
@@ -640,9 +774,12 @@ struct rawmidi_3bytes_in : csnd::Plugin<4,3>
 
     uint8_t requested_channel, requested_ident;
     double stamp;
-    std::vector<unsigned char> buf, tmp_buf;
+    
+    csnd::AuxMem<unsigned char> buf, tmp_buf;
+    
     RtMidiInDispatcher *midiin;
-    MidiInApi::MidiQueue queue;
+    cs_queue<cs_midi_msg> queue;
+    
     unsigned int front;
 };
 
@@ -665,10 +802,10 @@ struct rawmidi_2bytes_in : csnd::Plugin<3,2>
         requested_channel = 255;
         requested_ident = 255;
 
-        buf.resize(128);
-        tmp_buf.resize(128);
-        queue.ringSize = 100;
-        queue.ring = new MidiInApi::MidiMessage[ queue.ringSize ];
+        buf.allocate(csound, 128);
+        tmp_buf.allocate(csound, 128);
+        queue.allocate(csound, 100);
+        queue.ringsize = 100;
 
         if(in_count() > 1)
         {
@@ -689,23 +826,22 @@ struct rawmidi_2bytes_in : csnd::Plugin<3,2>
 
     int kperf()
     {
-        MidiInApi::MidiQueue &receiver_queue = midiin->get_queue();
-        MidiInApi::MidiQueue copy(receiver_queue);
+        cs_queue<cs_midi_msg> &receiver_queue = midiin->get_queue();
+
         midiin->use();
-        copy.front = front;
-        while(copy.pop(&tmp_buf, &stamp)) {
-            MidiInApi::MidiMessage msg;
-            msg.bytes = tmp_buf;
-            msg.timeStamp = stamp;
-            queue.push(msg);
+        receiver_queue.front = front;
+        cs_midi_msg _msg{tmp_buf.data(), tmp_buf.len(), 0};
+        while(receiver_queue.pop(&_msg, &stamp)) {
+            _msg.timestamp = stamp;
+            queue.push(&_msg);
         }
-        front = copy.front;
+        front = receiver_queue.front;
 
         // Check for first relevant message in the queue
-        while(queue.pop(&buf, &stamp)) {
-            if( (buf[0] & 0xF0) == status) {
-                uint8_t channel = (uint8_t(buf[0]) & 0x0F) + 1;
-                uint8_t byte1 = uint8_t(buf[1]) & 0b01111111;
+        while(queue.pop(&_msg, &stamp)) {
+            if( (_msg.data[0] & 0xF0) == status) {
+                uint8_t channel = (uint8_t(_msg.data[0]) & 0x0F) + 1;
+                uint8_t byte1 = uint8_t(_msg.data[1]) & 0b01111111;
 
                 if(requested_channel < 17 && (channel != requested_channel))
                     continue;
@@ -725,9 +861,9 @@ struct rawmidi_2bytes_in : csnd::Plugin<3,2>
 
     uint8_t requested_channel, requested_ident;
     double stamp;
-    std::vector<unsigned char> buf, tmp_buf;
+    csnd::AuxMem<unsigned char> buf, tmp_buf;
     RtMidiInDispatcher *midiin;
-    MidiInApi::MidiQueue queue;
+    cs_queue<cs_midi_msg> queue;
     unsigned int front;
 };
 
@@ -947,6 +1083,7 @@ struct erae_messages {
 
 
 // WPZ = Widget per zone, as "one widget per zone", each zone contains max 1 widget that expands inside
+/*
 struct erae_wpz_base
 {
     void prepare(csnd::Csound *cs, size_t insize)
@@ -1005,7 +1142,7 @@ struct erae_wpz_base
     size_t samples_to_refresh;
     size_t increment = 0;
 };
-
+*/
 
 
 /**
@@ -1023,6 +1160,7 @@ struct erae_wpz_base
  * @return finger
  *
 **/
+/*
 struct erae_wpz_xyz : csnd::Plugin<6, 4>, erae_wpz_base
 {
     // Draw rectangle F0 00 21 50 00 01 00 01 01 01 04 22 ZONE XPOS YPOS WIDTH HEIGHT RED GREEN BLUE F7
@@ -1116,7 +1254,7 @@ struct erae_wpz_xyz : csnd::Plugin<6, 4>, erae_wpz_base
     fingerstream fingerlist[10];
     std::vector<uint8_t> screen;
 };
-
+*/
 /**
  * @brief The erae_wpz_matrix struct is a matrix for Erae touch
  * @arg midiin
@@ -1132,6 +1270,8 @@ struct erae_wpz_xyz : csnd::Plugin<6, 4>, erae_wpz_base
  * @return index (in array)
 **/
 // Configurable matrix
+
+/*
 struct erae_wpz_matrix : csnd::Plugin<5, 8>, erae_wpz_base
 {
 
@@ -1445,6 +1585,8 @@ struct erae_wpz_matrix_dyn : csnd::Plugin<5, 9>, erae_wpz_base
     std::vector<uint8_t> screen;
     csnd::AuxMem<cell_state> selection_list;
 };
+*/
+
 /**
  * @brief Retrieve from matrix array
  *
@@ -1455,6 +1597,7 @@ struct erae_wpz_matrix_dyn : csnd::Plugin<5, 9>, erae_wpz_base
  *
  * @return value
 **/
+/*
 struct erae_wpz_matrix_getvalue : csnd::Plugin<1, 4>
 {
     int init() {return OK;}
@@ -1529,6 +1672,7 @@ struct erae_sysex_clear_zone : csnd::InPlug<2>
         return OK;
     }
 };
+*/
 
 struct decode_5bytes_float : csnd::Plugin<1, 3>
 {
@@ -1702,20 +1846,22 @@ void csnd::on_load(Csound *csound) {
     /**
     Erae Touch utilities and widgets 
     **/
+    /*
     // Basinc ERAE Touch sysex API functions
     csnd::plugin<erae_sysex_open>(csound, "erae_sysex_open", "", "iiii", csnd::thread::i);
     csnd::plugin<erae_sysex_close>(csound, "erae_sysex_close", "", "i", csnd::thread::i);
     csnd::plugin<erae_sysex_clear_zone>(csound, "erae_sysex_clear_zone", "", "ii", csnd::thread::i);
 
-    // Floats decoder for 7bitized float stream
-    csnd::plugin<decode_5bytes_float>(csound, "decode_floats", "k[]", "k[]ki", csnd::thread::ik);
 
     // WPZ is widget per zone, a set of widgets using one full API zone
     csnd::plugin<erae_wpz_xyz>(csound, "erae_wpz_xyz", "kkkkkk", "iiii[]", csnd::thread::ik);
     csnd::plugin<erae_wpz_matrix>(csound, "erae_wpz_matrix", "k[]kkkk", "iiiiii[]i[]i", csnd::thread::ik);
     csnd::plugin<erae_wpz_matrix_getvalue>(csound, "erae_wpz_matrix_getvalue", "k", "k[]kkk", csnd::thread::ik);
     csnd::plugin<erae_wpz_matrix_dyn>(csound, "erae_wpz_matrix_dyn", "k[]kkkk", "iiiiii[]i[]ik[]", csnd::thread::ik);
+    */
 
+    // Floats decoder for 7bitized float stream
+    csnd::plugin<decode_5bytes_float>(csound, "decode_floats", "k[]", "k[]ki", csnd::thread::ik);
     /** SYSEX Utilities **/
     csnd::plugin<sysex_text_to_arr>(csound, "sysex_text_to_bytes", "ii[]", "S", csnd::thread::i);
     //csnd::plugin<sysex_compose>(csound, "sysex_compose", "ii[]", "M", csnd::thread::i);
