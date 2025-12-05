@@ -21,6 +21,11 @@
         "string": "cpp",
         "unordered_map": "cpp",
         "unordered_set": "cpp",
-        "vector": "cpp"
+        "vector": "cpp",
+        "forward_list": "cpp",
+        "system_error": "cpp",
+        "atomic": "cpp",
+        "ios": "cpp",
+        "__config": "cpp"
     }
 }

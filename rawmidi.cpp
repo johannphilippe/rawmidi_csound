@@ -7,6 +7,8 @@
 
 using namespace std;
 
+#include<array>
+
 #include<cstdint>
 #include<cstddef>
 
@@ -389,7 +391,6 @@ public:
     void use() {
         cs_midi_msg _msg{buf->data(), buf->len(), 0};
         use_count = (use_count + 1) % suscribed;
-        std::cout << "use count : " << use_count << std::endl;
         if(use_count == 0) {
             while(queue->pop(&_msg, &stamp)) {}
         }
@@ -957,21 +958,31 @@ struct fingerstream
 };
 
 struct erae_messages {
-    static inline bool is_proper_boundary_reply(std::vector<uint8_t> &vec, uint8_t zone)
+
+    static inline bool is_proper_boundary_reply(csnd::AuxMem<uint8_t> &vec, uint8_t zone)
     {
-        if(vec.size() != 10 || vec[4] != 0x7F) return false;
-        if(vec[6] != zone) return false;
+        std::cout << "Boundary ? " << std::endl;
+        if(vec[8] != 0x7F) return false;
+        std::cout << "not 8 " << std::endl;
+        if(vec[9] != 0x01) return false; 
+        std::cout << "not 9 " << std::endl;
+        if(vec[10] != zone) return false;
+        std::cout << "not 10 " << std::endl;
         return true;
     }
-    static inline std::pair<uint8_t, uint8_t> get_boundaries(std::vector<uint8_t> &vec)
+    static inline std::pair<uint8_t, uint8_t> get_boundaries(csnd::AuxMem<uint8_t> &vec)
     {
         return {vec[7], vec[8]};
     }
 
-    static inline bool is_proper_fingerstream(std::vector<uint8_t> &vec, uint8_t zone)
+    static inline bool is_proper_fingerstream(csnd::AuxMem<uint8_t> &vec, uint8_t zone)
     {
-        if(vec.size() != 22) return false;
-        if(vec[5] != zone) return false;
+        std::cout << "Fingerstream ? " << std::endl;
+        std::cout << "vec 8 : " << vec[8] << std::endl;
+        if(vec[8] == 0x7F) return false;
+        std::cout << "8 ok ? " << std::endl;
+        if(vec[9] != zone) return false;
+        std::cout << "9 ok , fingersteram ! " << std::endl;
         return true;
     }
 
@@ -988,7 +999,7 @@ struct erae_messages {
             stream.action = fingerstream::action_t::undefined;
         stream.finger = finger;
     }
-    static inline void get_fingerstream( std::vector<uint8_t> &vec, uint8_t width, uint8_t height, fingerstream &stream, csnd::AuxMem<uint8_t> &out_buf)
+    static inline void get_fingerstream( csnd::AuxMem<uint8_t> &vec, uint8_t width, uint8_t height, fingerstream &stream, csnd::AuxMem<uint8_t> &out_buf)
     {
         stream.chksum = vec[20];
         retrieve_action(vec[4], stream);
@@ -1005,7 +1016,7 @@ struct erae_messages {
         stream.z = xyz[2];
     }
 
-    static inline void get_fingerstream_not_normalized( std::vector<uint8_t> &vec, uint8_t width, uint8_t height, fingerstream &stream, csnd::AuxMem<uint8_t> &out_buf)
+    static inline void get_fingerstream_not_normalized( csnd::AuxMem<uint8_t> &vec, uint8_t width, uint8_t height, fingerstream &stream, csnd::AuxMem<uint8_t> &out_buf)
     {
         stream.chksum = vec[20];
         retrieve_action(vec[4], stream);
@@ -1022,46 +1033,68 @@ struct erae_messages {
         stream.z = xyz[2];
     }
 
-    static inline std::vector<uint8_t> open_sysex(uint8_t receiver, uint8_t prefix, uint8_t bytes)
+    template <typename T, typename... U>
+    static constexpr auto make_array(U&&... u) {
+        return std::array<T, sizeof...(U)>{ { static_cast<T>(u)... } };
+    }
+    
+
+    static inline size_t open_sysex(csnd::AuxMem<uint8_t> *data_ptr, uint8_t receiver_bytes)
     {
-        return std::vector<uint8_t>{0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x04, 0x01, receiver, prefix, bytes, 0xF7};
+        auto open_sysex_msg = erae_messages::make_array<uint8_t>(0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x02, 0x01, 0x01, 0x04, 0x01, receiver_bytes, 0xF7);
+        std::memcpy(data_ptr->data(), &open_sysex_msg, open_sysex_msg.size());
+        return open_sysex_msg.size();
     }
 
-    static inline const std::vector<uint8_t> close_sysex()
+    static inline size_t close_sysex(csnd::AuxMem<uint8_t> *data_ptr)
     {
-        return std::vector<uint8_t>{0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x04, 0x02, 0xF7};
+        auto close_sysex_msg = erae_messages::make_array<uint8_t>(0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x02, 0x01, 0x01, 0x04, 0x02, 0xF7);
+        std::memcpy(data_ptr->data(), &close_sysex_msg, close_sysex_msg.size());
+        return close_sysex_msg.size();
     }
 
-    static inline std::vector<uint8_t> boundary_request(uint8_t zone)
+    static inline size_t boundary_request(csnd::Csound *cs, csnd::AuxMem<uint8_t> *data_ptr, uint8_t zone)
     {
         //F0 00 21 50 00 01 00 01 01 01 04 10 ZONE F7
-        return std::vector<uint8_t>{0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x04, 0x10, zone, 0xF7};
+        auto boundary_request_msg = erae_messages::make_array<uint8_t>(0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x02, 0x01, 0x01, 0x04, 0x10, zone, 0xF7);
+        if(data_ptr->len() < boundary_request_msg.size())
+            data_ptr->allocate(cs, boundary_request_msg.size());
+        std::memset(data_ptr->data(), 0, data_ptr->len());
+        std::memcpy(data_ptr->data(), &boundary_request_msg, boundary_request_msg.size() * sizeof(uint8_t));
+        return boundary_request_msg.size();
     }
 
-    static inline std::vector<uint8_t> draw_rectangle(uint8_t zone, uint8_t x, uint8_t y, uint8_t w, uint8_t h, color c)
+    static inline size_t draw_rectangle(csnd::Csound *cs, csnd::AuxMem<uint8_t> *data_ptr, uint8_t zone, uint8_t x, uint8_t y, uint8_t w, uint8_t h, color c)
     {
        //F0 00 21 50 00 01 00 01 01 01 04 22 ZONE XPOS YPOS WIDTH HEIGHT RED GREEN BLUE F7
-        return std::vector<uint8_t>{0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x04, 0x22, zone, x, y, w, h, c.r, c.g, c.b, 0xF7};
+        auto draw_rect_msg = erae_messages::make_array<uint8_t>(0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x02, 0x01, 0x01, 0x04, 0x22, zone, x, y, w, h, c.r, c.g, c.b, 0xF7);
+        if(data_ptr->len() < draw_rect_msg.size())
+            data_ptr->allocate(cs, draw_rect_msg.size());
+        std::memset(data_ptr->data(), 0, data_ptr->len());
+        std::memcpy(data_ptr->data(), &draw_rect_msg, draw_rect_msg.size());
+        return draw_rect_msg.size();
     }
 
-    static inline std::vector<uint8_t> clear_zone(uint8_t zone)
+    static inline size_t clear_zone(csnd::AuxMem<uint8_t> *data_ptr, uint8_t zone)
     {
        //F0 00 21 50 00 01 00 01 01 01 04 20 ZONE F7
-        return std::vector<uint8_t>{0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0X01, 0x01, 0x01, 0x04, 0x20, zone, 0xF7};
+        auto clear_msg = erae_messages::make_array<uint8_t>(0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0X02, 0x01, 0x01, 0x04, 0x20, zone, 0xF7);
+        std::memcpy(data_ptr->data(), &clear_msg, clear_msg.size());
+        return clear_msg.size();
     }
 
-    static inline std::vector<uint8_t> draw_pixel(uint8_t zone, uint8_t x, uint8_t y, color c)
+    static inline size_t draw_pixel(csnd::AuxMem<uint8_t> *data_ptr, uint8_t zone, uint8_t x, uint8_t y, color c)
     {
         //F0 00 21 50 00 01 00 01 01 01 04 21 ZONE XPOS YPOS RED GREEN BLUE F7
         //F0 00 21 50 00 01 00 01 01 01 04 21 ZONE XPOS YPOS RED GREEN BLUE F7
-        return std::vector<uint8_t>{0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x04, 0x21, zone, x, y, c.r, c.g, c.b, 0xF7};
+        auto draw_pix_msg  = erae_messages::make_array<uint8_t>(0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x02, 0x01, 0x01, 0x04, 0x21, zone, x, y, c.r, c.g, c.b, 0xF7);
+        std::memcpy(data_ptr->data(), &draw_pix_msg, draw_pix_msg.size());
+        return draw_pix_msg.size();
     }
 
-    static inline std::vector<uint8_t> draw_circle(uint8_t zone, uint8_t x, uint8_t y, uint8_t rad, color c)
+    static inline size_t draw_circle(csnd::AuxMem<uint8_t> *data_ptr, uint8_t zone, uint8_t x, uint8_t y, uint8_t rad, color c)
     {
-
-        std::vector<uint8_t> vec(1024);
-
+        size_t total = 0;
         size_t npoints = rad * 5;
         size_t angle_increment = 360 / npoints;
         for(size_t i = 0; i < npoints; ++i)
@@ -1069,41 +1102,43 @@ struct erae_messages {
             size_t angle = angle_increment * i;
             uint8_t xp = x + rad * std::cos(angle);
             uint8_t yp = y +rad * std::sin(angle);
-
-            std::vector<uint8_t> pix = draw_pixel(zone, xp, yp, c);
-            for(size_t j = 0; j < pix.size(); ++j)
-                vec.push_back(pix[j]);
+            auto draw_pix_msg  = erae_messages::make_array<uint8_t>(0xF0, 0x00, 0x21, 0x50, 0x00, 0x01, 0x00, 0x02, 0x01, 0x01, 0x04, 0x21, zone, xp, yp, c.r, c.g, c.b, 0xF7);
+            ::memcpy(data_ptr->data() + (i*19), &draw_pix_msg, draw_pix_msg.size());
+            //size_t s = draw_pixel(data_ptr->data() + (i*19) , zone, xp, yp, c);
+            total += draw_pix_msg.size();
         }
-
-        return vec;
+        return total;
     }
-
 
 };
 
 
 // WPZ = Widget per zone, as "one widget per zone", each zone contains max 1 widget that expands inside
-/*
 struct erae_wpz_base
 {
     void prepare(csnd::Csound *cs, size_t insize)
     {
-        queue.ringSize = 100;
-        queue.ring = new MidiInApi::MidiMessage[ queue.ringSize ];
-        buf.resize(1024);
-        tmp_buf.resize(1024);
+        std::cout << "XYZ base  : alloc queue " << std::endl;
+        queue.allocate(cs, 100);
+        //queue.ringSize = 100;
+        //queue.ring = new MidiInApi::MidiMessage[ queue.ringSize ];
+        std::cout << "XYZ base  : alloc buf " << std::endl;
+        buf.allocate(cs, 1024);
+        std::cout << "XYZ base  : alloc tmp " << std::endl;
+        tmp_buf.allocate(cs, 1024);
         size_t s = unbitized7size(insize);
+        std::cout << "XYZ base  : alloc out " << std::endl;
         out_buf.allocate(cs, s);
+        std::cout << "XYZ base  : midi suscribe " << std::endl;
         midiin->suscribe();
-        cs->plugin_deinit(this);
+        std::cout << "XYZ base  : deinit set " << std::endl;
+        //cs->plugin_deinit(this);
 
+        fps = 30;
         samples_to_refresh = cs->sr() / fps;
+        std::cout << "XYZ base  : prepare ok " << std::endl;
     }
 
-    int deinit() {
-        midiin->unsuscribe();
-        return OK;
-    }
 
     void set_fps(csnd::Csound *cs, uint8_t _fps)
     {
@@ -1112,27 +1147,34 @@ struct erae_wpz_base
     }
 
     void get_data() {
-        MidiInApi::MidiQueue &receiver_queue = midiin->get_queue();
-        MidiInApi::MidiQueue copy(receiver_queue);
+        cs_queue<cs_midi_msg> &receiver_queue = midiin->get_queue();
+        //MidiInApi::MidiQueue &receiver_queue = midiin->get_queue();
+        //MidiInApi::MidiQueue copy(receiver_queue);
+
         midiin->use();
-        copy.front = front;
-        while(copy.pop(&tmp_buf, &stamp)) {
-            MidiInApi::MidiMessage msg;
-            msg.bytes = tmp_buf;
-            msg.timeStamp = stamp;
-            queue.push(msg);
+        receiver_queue.front = front;
+        cs_midi_msg _msg{buf.data(), buf.len(), 0};
+        while(receiver_queue.pop(&_msg, &stamp)) {
+            _msg.timestamp = stamp;
+            queue.push(&_msg);
+            std::cout << "push to internal queue "  << std::endl;
         }
-        front = copy.front;
+        front = receiver_queue.front;
     }
 
     RtMidiInDispatcher *midiin;
-    RtMidiOut *midiout;
-    MidiInApi::MidiQueue queue;
+    //RtMidiOut *midiout;
+    RtMidiOutPtr midiout;
+    cs_queue<cs_midi_msg> queue;
+    
+    //MidiInApi::MidiQueue queue;
     uint8_t zone;
 
     size_t front;
     double stamp;
-    std::vector<unsigned char> buf, tmp_buf;
+    csnd::AuxMem<unsigned char> buf, tmp_buf;
+
+    //std::vector<unsigned char> buf, tmp_buf;
     size_t width, height;
     fingerstream stream_data;
     csnd::AuxMem<uint8_t> out_buf;
@@ -1142,7 +1184,6 @@ struct erae_wpz_base
     size_t samples_to_refresh;
     size_t increment = 0;
 };
-*/
 
 
 /**
@@ -1160,42 +1201,60 @@ struct erae_wpz_base
  * @return finger
  *
 **/
-/*
 struct erae_wpz_xyz : csnd::Plugin<6, 4>, erae_wpz_base
 {
     // Draw rectangle F0 00 21 50 00 01 00 01 01 01 04 22 ZONE XPOS YPOS WIDTH HEIGHT RED GREEN BLUE F7
     // Request boundary in init
     int init()
     {
+        std::cout << "XYZ Init " << std::endl;
         midiin = reinterpret_cast<RtMidiInDispatcher *>((intptr_t)inargs[0]);
-        midiout = reinterpret_cast<RtMidiOut *>((intptr_t)inargs[1]);
+        midiout = rtmidi_out_create(get_api_from_index(static_cast<int>(inargs[1])), "Client Name");
+
+        std::cout << "XYZ Created,  " << std::endl;
         zone = inargs[2];
+        std::cout << "XYZ checking color " << std::endl;
         if(in_count() > 3) {
             csnd::Vector<MYFLT> vec = inargs.vector_data<MYFLT>(3);
             c = color{uint8_t(vec[0]), uint8_t(vec[1]), uint8_t(vec[2])};
             c.mult(0.7);
         }
         inv_color = color{uint8_t(127-c.r), uint8_t(127-c.g), uint8_t(127-c.b) };
+        std::cout << "XYZ Prepare : " << std::endl;
         prepare(csound, 14);
-        std::vector<uint8_t> msg = erae_messages::boundary_request(zone);
-        midiout->sendMessage(&msg);
 
-        screen.resize(1024);
+        // Need to take care of that with a pointer or something
+        //std::vector<uint8_t> msg = erae_messages::boundary_request(zone);
+        std::cout << "XYZ Check boundaries " << std::endl;
+        size_t s = erae_messages::boundary_request(csound, &boundary, zone);
+        std::cout << "XYZ sending boundary request " << std::endl;
+        rtmidi_out_send_message(midiout, boundary.data(), s);
+        //midiout->sendMessage(&msg);
+
+        std::cout << "XYZ screen alloc " << std::endl;
+        screen.allocate(csound, 1024);
 
         for(size_t i = 0; i < 10; ++i)
             fingerlist[i].action = fingerstream::action_t::undefined;
 
+        std::cout << "XYZ Init OK" << std::endl;
+
+        csound->plugin_deinit(this);
+        return OK;
+    }
+
+    int deinit() {
+        midiin->unsuscribe();
         return OK;
     }
 
     void redraw() {
-        screen.clear();
-        std::vector<uint8_t> rect = erae_messages::draw_rectangle(zone, 0, 0, width, height, c);
-        for(size_t i = 0; i < rect.size(); ++i)
-            screen.push_back(rect[i]);
-
-        // Last touch cross
-            std::cout << "\n\nStart loop" << std::endl;
+        std::cout << "redraw " << std::endl;
+        //screen.clear();
+        std::memset(screen.data(), 0, screen.len());
+        
+        size_t total = erae_messages::draw_rectangle(csound, &screen, zone, 0, 0, width, height, c);
+        std::cout << "\n\nStart loop" << std::endl;
         for(size_t i = 0; i < 10; ++i)
         {
             std::cout << i << " finger : " << (int)fingerlist[i].finger << " - action " << (int)fingerlist[i].action << std::endl;
@@ -1203,32 +1262,38 @@ struct erae_wpz_xyz : csnd::Plugin<6, 4>, erae_wpz_base
                 color cross_c = inv_color; //color::white();
                 cross_c.mult(stream_data.z);
 
-                rect = erae_messages::draw_rectangle(zone, fingerlist[i].x * width,  0, 1, height, cross_c);
-                for(size_t i = 0; i < rect.size(); ++i)
-                    screen.push_back(rect[i]);
-                rect = erae_messages::draw_rectangle(zone, 0,  fingerlist[i].y * height, width, 1, cross_c);
-                for(size_t i = 0; i < rect.size(); ++i)
-                    screen.push_back(rect[i]);
+                size_t s = erae_messages::draw_rectangle(csound, &rect, zone, fingerlist[i].x * width,  0, 1, height, cross_c);
+                for(size_t i = 0; i < s; ++i)
+                    screen[i+total] = rect[i];
+                total += s;
+                s = erae_messages::draw_rectangle(csound, &rect, zone, 0, fingerlist[i].y * height, width, 1, cross_c);
+                for(size_t i = 0; i < s; ++i)
+                    screen[i+total] = rect[i];
             }
         }
-        midiout->sendMessage(&screen);
+        rtmidi_out_send_message(midiout, screen.data(), screen.len());
     }
 
     int kperf()
     {
         outargs[0] = 0;
         get_data();
-        if(!queue.pop(&buf, &stamp)) {
+        cs_midi_msg _msg{buf.data(), buf.len(), 0};
+        if(!queue.pop(&_msg, &stamp)) {
             return OK;
         }
+        std::cout << "has message " << buf[0]  << std::endl;
         if(erae_messages::is_proper_boundary_reply(buf, zone)) {
-            std::pair<uint8_t, uint8_t> boundaries = erae_messages::get_boundaries(buf);
-            width = boundaries.first;
-            height = boundaries.second;
+            std::cout << "boundary"  << std::endl;
+            //std::pair<uint8_t, uint8_t> boundaries = erae_messages::get_boundaries(buf);
+            width = buf[11];
+            height = buf[12];
             // Draw
-            std::vector<uint8_t> rect = erae_messages::draw_rectangle(zone, 0, 0, width, height, c);
-            midiout->sendMessage(&rect);
+            erae_messages::draw_rectangle(csound, &rect, zone, 0, 0, width, height, c);
+            //midiout->sendMessage(&rect);
+            rtmidi_out_send_message(midiout, rect.data(), rect.len());
         } else if(erae_messages::is_proper_fingerstream(buf, zone)) {
+            std::cout << "fingerstream" << std::endl;
             erae_messages::get_fingerstream( buf, width, height, stream_data, out_buf);
             outargs[0] = 1;
             outargs[1] = stream_data.x;
@@ -1252,9 +1317,11 @@ struct erae_wpz_xyz : csnd::Plugin<6, 4>, erae_wpz_base
     color c = color::blue();
     color inv_color;
     fingerstream fingerlist[10];
-    std::vector<uint8_t> screen;
+    //std::vector<uint8_t> screen;
+
+    csnd::AuxMem<uint8_t> screen, rect, boundary;
 };
-*/
+
 /**
  * @brief The erae_wpz_matrix struct is a matrix for Erae touch
  * @arg midiin
@@ -1597,6 +1664,7 @@ struct erae_wpz_matrix_dyn : csnd::Plugin<5, 9>, erae_wpz_base
  *
  * @return value
 **/
+
 /*
 struct erae_wpz_matrix_getvalue : csnd::Plugin<1, 4>
 {
@@ -1610,6 +1678,7 @@ struct erae_wpz_matrix_getvalue : csnd::Plugin<1, 4>
         return OK;
     }
 };
+
 
 struct erae_sysex_open : csnd::InPlug<4>
 {
@@ -1846,15 +1915,16 @@ void csnd::on_load(Csound *csound) {
     /**
     Erae Touch utilities and widgets 
     **/
-    /*
     // Basinc ERAE Touch sysex API functions
+    /*
     csnd::plugin<erae_sysex_open>(csound, "erae_sysex_open", "", "iiii", csnd::thread::i);
     csnd::plugin<erae_sysex_close>(csound, "erae_sysex_close", "", "i", csnd::thread::i);
     csnd::plugin<erae_sysex_clear_zone>(csound, "erae_sysex_clear_zone", "", "ii", csnd::thread::i);
-
+    */
 
     // WPZ is widget per zone, a set of widgets using one full API zone
     csnd::plugin<erae_wpz_xyz>(csound, "erae_wpz_xyz", "kkkkkk", "iiii[]", csnd::thread::ik);
+    /*
     csnd::plugin<erae_wpz_matrix>(csound, "erae_wpz_matrix", "k[]kkkk", "iiiiii[]i[]i", csnd::thread::ik);
     csnd::plugin<erae_wpz_matrix_getvalue>(csound, "erae_wpz_matrix_getvalue", "k", "k[]kkk", csnd::thread::ik);
     csnd::plugin<erae_wpz_matrix_dyn>(csound, "erae_wpz_matrix_dyn", "k[]kkkk", "iiiiii[]i[]ik[]", csnd::thread::ik);
